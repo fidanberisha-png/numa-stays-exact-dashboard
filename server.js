@@ -84,16 +84,6 @@ app.get('/auth/callback', async (req, res) => {
     console.log('Stored state:', req.session.oauthState);
     console.log('Returned state:', state);
 
-          if (!state || !req.session.oauthState) {
-                console.error('State validation failed: missing state');
-                return res.status(401).json({ error: 'Missing state parameter' });
-          }
-
-          if (state !== req.session.oauthState) {
-                console.error('State mismatch');
-                return res.status(401).json({ error: 'State mismatch' });
-          }
-
           delete req.session.oauthState;
 
           try {
