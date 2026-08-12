@@ -23,6 +23,11 @@ app.use(session({
 // Static files
 app.use(express.static('public'));
 
+// Root route - serve dashboard.html
+app.get('/', (req, res) => {
+      res.sendFile(__dirname + '/public/dashboard.html');
+});
+
 // OAuth Configuration
 const EXACT_CLIENT_ID = process.env.EXACT_CLIENT_ID;
 const EXACT_CLIENT_SECRET = process.env.EXACT_CLIENT_SECRET;
