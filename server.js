@@ -10,6 +10,7 @@ dotenv.config();
 const app = express();
 app.set('trust proxy', 1);
 const PORT = process.env.PORT || 3000;
+app.use(require('./exact-routes')(function () { return tokenData; }));
 
 // Middleware
 app.use(cors());
