@@ -94,7 +94,7 @@ app.get('/auth/callback', async (req, res) => {
                         redirect_uri: EXACT_REDIRECT_URI,
                         client_id: EXACT_CLIENT_ID,
                         client_secret: EXACT_CLIENT_SECRET
-                });
+                }));
 
       tokenData = response.data;
                 tokenData.created_at = Date.now();
