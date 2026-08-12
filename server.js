@@ -181,6 +181,109 @@ setInterval(() => {
     }
 }, REFRESH_INTERVAL);
 
+// New endpoints for comprehensive dashboard data
+app.get('/api/dashboard', async (req, res) => {
+    try {
+        if (!tokenData) {
+            return res.status(401).json({ error: 'Not authenticated' });
+        }
+
+        if (isTokenExpired()) {
+            await refreshToken();
+        }
+
+        const headers = {
+            'Authorization': `Bearer ${tokenData.access_token}`,
+            'Accept': 'application/json'
+        };
+
+        // Fetch invoices and journal entries
+        const [invoicesResp, journalResp] = await Promise.all([
+            axios.get(`${EXACT_API_BASE}salesinvoices`, { headers }),
+            axios.get(`${EXACT_API_BASE}journalentries?$filter=JournalType eq 70 or JournalType eq 80`, { headers })
+            ]);
+
+        const invoices = invoicesResp.data.d || [];
+        const journal = journalResp.data.d || [];
+
+        // Calculate KPIs from invoices
+        let totalRevenue = 0;
+        let pendingInvoices = [];
+
+        invoices.forEach(inv => {
+            if (inv.Amount) totalRevenue += Math.abs(inv.Amount);
+            if (inv.Status !== 4) { // Not paid
+                pendingInvoices.push(inv);
+            }
+        });
+
+        res.json({
+            invoices: invoices,
+            journal: journal,
+            totalRevenue: totalRevenue,
+            pendingInvoices: pendingInvoices.length,
+            lastedUpdated: new Date()
+        });
+    } catch (error) {
+        console.error('Error fetching dashboard data:', error);
+        res.status(500).json({ error: 'Failed to fetch dashboard data' });
+    }
+});
+
+app.get('/api/glaccounts', async (req, res) => {
+    try {
+        if (!tokenData) {
+            return res.status(401).json({ error: 'Not authenticated' });
+        }
+
+        if (isTokenExpired()) {
+            await refreshToken();
+        }
+
+        const response = await axios.get(
+            `${EXACT_API_BASE}glaccounts`,
+            {
+                headers: {
+                    'Authorization': `Bearer ${tokenData.access_token}`,
+                    'Accept': 'application/json'
+                }
+            }
+            );
+
+        res.json(response.data);
+    } catch (error) {
+        console.error('Error fetching GL accounts:', error);
+        res.status(500).json({ error: 'Failed to fetch GL accounts' });
+    }
+});
+
+app.get('/api/bankaccounts', async (req, res) => {
+    try {
+        if (!tokenData) {
+            return res.status(401).json({ error: 'Not authenticated' });
+        }
+
+        if (isTokenExpired()) {
+            await refreshToken();
+        }
+
+        const response = await axios.get(
+            `${EXACT_API_BASE}bankaccounts`,
+            {
+                headers: {
+                    'Authorization': `Bearer ${tokenData.access_token}`,
+                    'Accept': 'application/json'
+                }
+            }
+            );
+
+        res.json(response.data);
+    } catch (error) {
+        console.error('Error fetching bank accounts:', error);
+        res.status(500).json({ error: 'Failed to fetch bank accounts' });
+    }
+});
+
 // Error handling
 app.use((err, req, res, next) => {
     console.error(err);
