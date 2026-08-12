@@ -87,7 +87,7 @@ app.get('/auth/callback', async (req, res) => {
           delete req.session.oauthState;
 
           try {
-                const response = await axios.post(EXACT_TOKEN_URL, {
+                const response = await axios.post(EXACT_TOKEN_URL, new URLSearchParams({
                         grant_type: 'authorization_code',
                         code,
                         redirect_uri: EXACT_REDIRECT_URI,
@@ -104,7 +104,7 @@ app.get('/auth/callback', async (req, res) => {
                 res.redirect('/?authenticated=true');
           } catch (error) {
                 console.error('OAuth token exchange error:', error.response?.data || error.message);
-                res.status(500).json({ error: 'Authentication failed', details: error.message });
+                res.status(500).json({ error: 'Authentication failed', details: error.response?.data || error.message });
           }
 });
 
