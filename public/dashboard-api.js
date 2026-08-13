@@ -23,7 +23,7 @@ async function checkAuthStatus() {
 // Load real data from Exact Online API
 async function loadDashboardData() {
       try {
-                const response = await fetch('/api/invoices');
+                const response = await fetch('/api/dashboard');
                 if (!response.ok) {
                               console.log('API not ready yet');
                               return;
@@ -48,9 +48,9 @@ function updateKPIs(invoices) {
       const today = new Date();
 
       invoices.forEach(invoice => {
-                const amount = parseFloat(invoice.InvoiceAmount) || 0;
+                const amount = parseFloat(invoice.AmountDC) || 0;
 
-                if (invoice.Status === 'Paid') {
+                if (invoice.Status === 50) {
                               totalRevenue += amount;
                 } else if (invoice.DueDate && new Date(invoice.DueDate) < today) {
                               overdueCount++;
@@ -89,7 +89,7 @@ function updateKPIs(invoices) {
 
                           kpiCards[3].innerHTML = `
                               <div class="kpi-title">PENDING INVOICES</div>
-                              <div class="kpi-value">${totalInvoices - (invoices.filter(i => i.Status === 'Paid').length)}</div>
+                              <div class="kpi-value">${totalInvoices - (invoices.filter(i => i.Status === 50).length)}</div>
                               <div class="kpi-change" style="background: #333; color: #888;">Awaiting payment</div>
                               <div style="height: 3px; background: #ff6b35; border-radius: 2px; margin-top: 15px;"></div>
                           `;
@@ -149,10 +149,10 @@ function updateTables(invoices) {
       let notDueAmount = 0, days1to30Amount = 0, days31to60Amount = 0;
 
       invoices.forEach(invoice => {
-                if (invoice.Status !== 'Paid' && invoice.DueDate) {
+                if (invoice.Status !== 50 && invoice.DueDate) {
                               const dueDate = new Date(invoice.DueDate);
                               const daysOverdue = Math.floor((today - dueDate) / (1000 * 60 * 60 * 24));
-                              const amount = parseFloat(invoice.InvoiceAmount) || 0;
+                              const amount = parseFloat(invoice.AmountDC) || 0;
 
                               if (daysOverdue <= 0) {
                                                 notDue++;
