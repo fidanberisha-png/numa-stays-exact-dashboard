@@ -43,7 +43,7 @@
                       return res.status(500).json(out);
                 }
                 try {
-                      out.invoices = await list(h, 'salesinvoice/SalesInvoices?$select=InvoiceDate,AmountDC,Status,InvoiceNumber&$top=500&$orderby=InvoiceDate desc');
+                      out.invoices = await list(h, 'salesinvoice/SalesInvoices?$select=InvoiceDate,AmountDC,Status,InvoiceNumber,DueDate&$top=500&$orderby=InvoiceDate desc');
                 } catch (e) {
                       out.errors.invoices = e.response ? e.response.data : e.message;
                 }
