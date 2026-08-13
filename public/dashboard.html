@@ -13,6 +13,9 @@
         .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 40px; flex-wrap: wrap; gap: 20px; }
         .logo { font-size: 1.8em; font-weight: 700; color: #fff; }
         .logo .icon { color: #00bfff; margin-right: 10px; }
+        .logo { display: flex; align-items: center; }
+        .entity-select { background: #252d3d; color: #fff; border: 1px solid #333; border-radius: 6px; padding: 6px 10px; font-size: 0.62em; font-weight: 700; font-family: inherit; cursor: pointer; max-width: 420px; }
+        .entity-select:focus { outline: none; border-color: #00bfff; }
         .nav-tabs { display: flex; gap: 20px; border-bottom: 1px solid #333; }
         .nav-tab { padding: 12px 20px; cursor: pointer; border-bottom: 3px solid transparent; transition: all 0.3s; color: #888; }
         .nav-tab.active { color: #00bfff; border-color: #00bfff; }
@@ -51,13 +54,41 @@
 <body>
     <div class="container">
         <div class="header">
-            <div class="logo"><i class="fas fa-building icon"></i>Numa Stays AS</div>
+                <div class="logo">
+                    <i class="fas fa-building icon"></i>
+                    <select id="entitySelect" class="entity-select">
+                    <option value="104">104 - Numa Nederland Operations B.V</option>
+                    <option value="202">202 - Yays Issy S.a.r.l.</option>
+                    <option value="203">203 - Numa France S.A.S.U</option>
+                    <option value="204">204 - HMA - 37 Marbeuf</option>
+                    <option value="300" selected>300 - Numa Norge AS</option>
+                    <option value="301">301 - Numa Danmark ApS</option>
+                    <option value="400">400 - YAYS Frankrijklei BV</option>
+                    <option value="401">401 - Numa Belgium North SRL</option>
+                    <option value="402">402 - Numa Belgium Central SRL</option>
+                    <option value="600">600 - Numa Stays UK Ltd</option>
+                    <option value="610">610 - Native Places Ltd</option>
+                    <option value="611">611 - Native Places Ltd - HMA - 50ML - Marlyebone Lane</option>
+                    <option value="612">612 - Native Places Ltd - HMA - AMSQ - City</option>
+                    <option value="613">613 - Native Places Ltd - HMA - CANN - Cannon Street</option>
+                    <option value="614">614 - Native Places Ltd - HMA - EDIN - Edinburgh</option>
+                    <option value="615">615 - Native Places Ltd - HMA - EMPW - Bankside</option>
+                    <option value="616">616 - Native Places Ltd - HMA - FENC - Fenchurch Street</option>
+                    <option value="617">617 - Native Places Ltd - HMA - FULR - Fulham</option>
+                    <option value="618">618 - Native Places Ltd - HMA - GLAS - Glasgow</option>
+                    <option value="619">619 - Native Places Ltd - HMA - KWA - King&#39;s Wardrobe</option>
+                    <option value="620">620 - Native Places Ltd - HMA - MARL - The Marlo</option>
+                    <option value="621">621 - Native Places Ltd - HMA - STAM - Waterloo</option>
+                    <option value="622">622 - Native Places Ltd - HMA - STSW - Bank</option>
+                    <option value="623">623 - Native Places Ltd - HMA - VERS - Verso</option>
+                    <option value="624">624 - Native Places Ltd - HMA - London - Fulham Broadway</option>
+                    <option value="700">700 - Numa Stays España S.L.</option>
+                    <option value="710">710 - NUMA PORTUGAL, UNIPESSOAL, LDA</option>
+                    <option value="720">720 - Numa Italia S.r.l.</option>
+                    </select>
+                </div>
             <div class="nav-tabs">
                 <div class="nav-tab active">Dashboards</div>
-                <div class="nav-tab">Financial</div>
-                <div class="nav-tab">Accounts</div>
-                <div class="nav-tab">Sales</div>
-                <div class="nav-tab">Purchase</div>
             </div>
             <div style="flex: 1; text-align: right; color: #888; font-size: 0.9em;">
                 <span style="color: #33d755;">🔵 Synced 08:14</span> | Reconciled 03:00 | Drift kr 0,00
@@ -66,8 +97,6 @@
 
         <div style="display: flex; gap: 15px; margin-bottom: 30px;">
             <button class="btn" style="background: #00bfff; color: #fff; border: none;">Overview</button>
-            <button class="btn">Open items</button>
-            <button class="btn">Reconciliation</button>
             <button class="btn" style="background: #00bfff; color: #fff; border: none; margin-left: auto;" onclick="window.location.href='/auth/login'">🔐 Connect Exact Online</button>
         </div>
 
@@ -85,20 +114,12 @@
                 <select><option>NOK (reporting)</option></select>
             </div>
             <div class="filter-group">
-                <label>Account group:</label>
-                <select><option>All groups</option></select>
-            </div>
-            <div class="filter-group">
                 <label>Entry status:</label>
                 <select><option>Posted only</option></select>
             </div>
             <div style="margin-left: auto;">
                 <span style="color: #888; font-size: 0.9em;">FINANCIAL YEAR</span>
                 <div style="display: flex; gap: 8px; margin-top: 8px;">
-                    <button class="btn" style="padding: 6px 12px;">2021</button>
-                    <button class="btn" style="padding: 6px 12px;">2022</button>
-                    <button class="btn" style="padding: 6px 12px;">2023</button>
-                    <button class="btn" style="padding: 6px 12px;">2024</button>
                     <button class="btn" style="padding: 6px 12px;">2025</button>
                     <button class="btn" style="padding: 6px 12px; background: #00bfff; color: #fff; border: none;">2026</button>
                 </div>
