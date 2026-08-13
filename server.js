@@ -298,12 +298,12 @@ function isTokenExpired() {
 
 async function refreshToken() {
     try {
-          const response = await axios.post(EXACT_TOKEN_URL, {
+          const response = await axios.post(EXACT_TOKEN_URL, new URLSearchParams({
                   grant_type: 'refresh_token',
                   refresh_token: tokenData.refresh_token,
                   client_id: EXACT_CLIENT_ID,
                   client_secret: EXACT_CLIENT_SECRET
-          });
+          }));
 
       tokenData = response.data;
           tokenData.created_at = Date.now();
