@@ -11,9 +11,8 @@
         body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #1a1f2e; color: #e0e0e0; line-height: 1.6; }
         .container { max-width: 1600px; margin: 0 auto; padding: 30px; }
         .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 40px; flex-wrap: wrap; gap: 20px; }
-        .logo { font-size: 1.8em; font-weight: 700; color: #fff; }
+        .logo { font-size: 1.8em; font-weight: 700; color: #fff; display: flex; align-items: center; }
         .logo .icon { color: #00bfff; margin-right: 10px; }
-        .logo { display: flex; align-items: center; }
         .entity-select { background: #252d3d; color: #fff; border: 1px solid #333; border-radius: 6px; padding: 6px 10px; font-size: 0.62em; font-weight: 700; font-family: inherit; cursor: pointer; max-width: 420px; }
         .entity-select:focus { outline: none; border-color: #00bfff; }
         .nav-tabs { display: flex; gap: 20px; border-bottom: 1px solid #333; }
@@ -26,6 +25,8 @@
         select { background: #252d3d; color: #e0e0e0; border: 1px solid #333; padding: 8px 12px; border-radius: 4px; cursor: pointer; }
         .btn { padding: 8px 16px; border: 1px solid #ff6b35; color: #ff6b35; background: transparent; border-radius: 4px; cursor: pointer; transition: all 0.3s; }
         .btn:hover { background: #ff6b35; color: #fff; }
+        .btn.year-btn.active { background: #00bfff; color: #fff; border-color: #00bfff; }
+        .notice { background: rgba(255, 193, 7, 0.12); border: 1px solid rgba(255, 193, 7, 0.4); color: #ffc107; padding: 10px 15px; border-radius: 6px; margin-bottom: 25px; font-size: 0.9em; }
         .kpi-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 20px; margin-bottom: 40px; }
         .kpi-card { background: linear-gradient(135deg, #252d3d 0%, #1f2634 100%); border: 1px solid #333; border-radius: 8px; padding: 25px; transition: all 0.3s; }
         .kpi-card:hover { border-color: #00bfff; transform: translateY(-5px); }
@@ -34,6 +35,7 @@
         .kpi-change { display: inline-block; padding: 5px 10px; border-radius: 4px; font-size: 0.85em; font-weight: 600; }
         .kpi-change.up { background: rgba(51, 215, 85, 0.2); color: #33d755; }
         .kpi-change.down { background: rgba(255, 107, 107, 0.2); color: #ff6b6b; }
+        .kpi-change.flat { background: #333; color: #888; }
         .chart-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(500px, 1fr)); gap: 20px; margin-bottom: 40px; }
         .chart-card { background: linear-gradient(135deg, #252d3d 0%, #1f2634 100%); border: 1px solid #333; border-radius: 8px; padding: 25px; }
         .chart-title { font-size: 1.1em; font-weight: 600; margin-bottom: 20px; color: #fff; }
@@ -42,68 +44,71 @@
         th { text-align: left; padding: 12px; border-bottom: 1px solid #333; color: #888; font-size: 0.9em; font-weight: 600; text-transform: uppercase; }
         td { padding: 12px; border-bottom: 1px solid #333; }
         tr:hover { background: rgba(0, 191, 255, 0.05); }
-        .badge { padding: 4px 8px; border-radius: 4px; font-size: 0.8em; font-weight: 600; }
-        .badge-success { background: rgba(51, 215, 85, 0.2); color: #33d755; }
-        .badge-warning { background: rgba(255, 193, 7, 0.2); color: #ffc107; }
-        .badge-danger { background: rgba(255, 107, 107, 0.2); color: #ff6b6b; }
+        .num { text-align: right; }
+        .pos { color: #33d755; }
+        .neg { color: #ff6b6b; }
         .bar-simple { display: flex; align-items: center; gap: 10px; }
         .bar { height: 20px; background: linear-gradient(90deg, #00bfff, #0099cc); border-radius: 2px; }
+        .acc-row { margin-bottom: 18px; }
+        .acc-head { display: flex; justify-content: space-between; margin-bottom: 8px; }
+        .acc-sub { color: #666; font-size: 0.8em; }
+        .footnote { color: #666; font-size: 0.85em; margin-bottom: 40px; }
         @media (max-width: 768px) { .chart-grid { grid-template-columns: 1fr; } .kpi-grid { grid-template-columns: 1fr; } }
     </style>
 </head>
 <body>
     <div class="container">
         <div class="header">
-                <div class="logo">
-                    <i class="fas fa-building icon"></i>
-                    <select id="entitySelect" class="entity-select">
-                    <option value="104">104 - Numa Nederland Operations B.V</option>
-                    <option value="202">202 - Yays Issy S.a.r.l.</option>
-                    <option value="203">203 - Numa France S.A.S.U</option>
-                    <option value="204">204 - HMA - 37 Marbeuf</option>
-                    <option value="300" selected>300 - Numa Norge AS</option>
-                    <option value="301">301 - Numa Danmark ApS</option>
-                    <option value="400">400 - YAYS Frankrijklei BV</option>
-                    <option value="401">401 - Numa Belgium North SRL</option>
-                    <option value="402">402 - Numa Belgium Central SRL</option>
-                    <option value="600">600 - Numa Stays UK Ltd</option>
-                    <option value="610">610 - Native Places Ltd</option>
-                    <option value="611">611 - Native Places Ltd - HMA - 50ML - Marlyebone Lane</option>
-                    <option value="612">612 - Native Places Ltd - HMA - AMSQ - City</option>
-                    <option value="613">613 - Native Places Ltd - HMA - CANN - Cannon Street</option>
-                    <option value="614">614 - Native Places Ltd - HMA - EDIN - Edinburgh</option>
-                    <option value="615">615 - Native Places Ltd - HMA - EMPW - Bankside</option>
-                    <option value="616">616 - Native Places Ltd - HMA - FENC - Fenchurch Street</option>
-                    <option value="617">617 - Native Places Ltd - HMA - FULR - Fulham</option>
-                    <option value="618">618 - Native Places Ltd - HMA - GLAS - Glasgow</option>
-                    <option value="619">619 - Native Places Ltd - HMA - KWA - King&#39;s Wardrobe</option>
-                    <option value="620">620 - Native Places Ltd - HMA - MARL - The Marlo</option>
-                    <option value="621">621 - Native Places Ltd - HMA - STAM - Waterloo</option>
-                    <option value="622">622 - Native Places Ltd - HMA - STSW - Bank</option>
-                    <option value="623">623 - Native Places Ltd - HMA - VERS - Verso</option>
-                    <option value="624">624 - Native Places Ltd - HMA - London - Fulham Broadway</option>
-                    <option value="700">700 - Numa Stays España S.L.</option>
-                    <option value="710">710 - NUMA PORTUGAL, UNIPESSOAL, LDA</option>
-                    <option value="720">720 - Numa Italia S.r.l.</option>
-                    </select>
-                </div>
+            <div class="logo">
+                <i class="fas fa-building icon"></i>
+                <select id="entitySelect" class="entity-select">
+                        <option value="104">104 - Numa Nederland Operations B.V</option>
+                        <option value="202">202 - Yays Issy S.a.r.l.</option>
+                        <option value="203">203 - Numa France S.A.S.U</option>
+                        <option value="204">204 - HMA - 37 Marbeuf</option>
+                        <option value="300" selected>300 - Numa Norge AS</option>
+                        <option value="301">301 - Numa Danmark ApS</option>
+                        <option value="400">400 - YAYS Frankrijklei BV</option>
+                        <option value="401">401 - Numa Belgium North SRL</option>
+                        <option value="402">402 - Numa Belgium Central SRL</option>
+                        <option value="600">600 - Numa Stays UK Ltd</option>
+                        <option value="610">610 - Native Places Ltd</option>
+                        <option value="611">611 - Native Places Ltd - HMA - 50ML - Marlyebone Lane</option>
+                        <option value="612">612 - Native Places Ltd - HMA - AMSQ - City</option>
+                        <option value="613">613 - Native Places Ltd - HMA - CANN - Cannon Street</option>
+                        <option value="614">614 - Native Places Ltd - HMA - EDIN - Edinburgh</option>
+                        <option value="615">615 - Native Places Ltd - HMA - EMPW - Bankside</option>
+                        <option value="616">616 - Native Places Ltd - HMA - FENC - Fenchurch Street</option>
+                        <option value="617">617 - Native Places Ltd - HMA - FULR - Fulham</option>
+                        <option value="618">618 - Native Places Ltd - HMA - GLAS - Glasgow</option>
+                        <option value="619">619 - Native Places Ltd - HMA - KWA - King&#39;s Wardrobe</option>
+                        <option value="620">620 - Native Places Ltd - HMA - MARL - The Marlo</option>
+                        <option value="621">621 - Native Places Ltd - HMA - STAM - Waterloo</option>
+                        <option value="622">622 - Native Places Ltd - HMA - STSW - Bank</option>
+                        <option value="623">623 - Native Places Ltd - HMA - VERS - Verso</option>
+                        <option value="624">624 - Native Places Ltd - HMA - London - Fulham Broadway</option>
+                        <option value="700">700 - Numa Stays España S.L.</option>
+                        <option value="710">710 - NUMA PORTUGAL, UNIPESSOAL, LDA</option>
+                        <option value="720">720 - Numa Italia S.r.l.</option>
+                </select>
+            </div>
             <div class="nav-tabs">
                 <div class="nav-tab active">Dashboards</div>
             </div>
             <div style="flex: 1; text-align: right; color: #888; font-size: 0.9em;">
-                <span style="color: #33d755;">🔵 Synced 08:14</span> | Reconciled 03:00 | Drift kr 0,00
+                <span style="color: #33d755;">Exact Online</span> | Bank updated 24-07-2026 | Currency NOK
             </div>
         </div>
 
         <div style="display: flex; gap: 15px; margin-bottom: 30px;">
             <button class="btn" style="background: #00bfff; color: #fff; border: none;">Overview</button>
-            <button class="btn" style="background: #00bfff; color: #fff; border: none; margin-left: auto;" onclick="window.location.href='/auth/login'">🔐 Connect Exact Online</button>
+            <button class="btn" style="background: #00bfff; color: #fff; border: none; margin-left: auto;" onclick="window.location.href='/auth/login'">Connect Exact Online</button>
         </div>
 
         <div class="filters">
             <div class="filter-group">
                 <label>Period:</label>
-                <select><option>Jan – Jul (07)</option></select>
+                <select id="periodSelect"></select>
             </div>
             <div class="filter-group">
                 <label>Property:</label>
@@ -119,163 +124,326 @@
             </div>
             <div style="margin-left: auto;">
                 <span style="color: #888; font-size: 0.9em;">FINANCIAL YEAR</span>
-                <div style="display: flex; gap: 8px; margin-top: 8px;">
-                    <button class="btn" style="padding: 6px 12px;">2025</button>
-                    <button class="btn" style="padding: 6px 12px; background: #00bfff; color: #fff; border: none;">2026</button>
-                </div>
-                <button class="btn" style="margin-top: 8px; border-color: #ff6b35;">Reset filters</button>
+                <div id="yearButtons" style="display: flex; gap: 8px; margin-top: 8px;"></div>
+                <button class="btn" id="resetFilters" style="margin-top: 8px; border-color: #ff6b35;">Reset filters</button>
             </div>
         </div>
+
+        <div id="notice" class="notice" style="display: none;"></div>
 
         <div class="kpi-grid">
             <div class="kpi-card">
                 <div class="kpi-title">Revenue YTD</div>
-                <div class="kpi-value">kr 42,8M</div>
-                <div class="kpi-change up">▲ 11,2% vs 2025 (kr 38,5M)</div>
+                <div class="kpi-value" id="kpiRevenue">-</div>
+                <div class="kpi-change flat" id="kpiRevenueChange">-</div>
                 <div style="height: 3px; background: #00bfff; border-radius: 2px; margin-top: 15px;"></div>
             </div>
             <div class="kpi-card">
-                <div class="kpi-title">Direct costs YTD</div>
-                <div class="kpi-value">kr 27,3M</div>
-                <div class="kpi-change down">▼ 8,4% vs 2025 (kr 25,2M)</div>
+                <div class="kpi-title">Costs YTD</div>
+                <div class="kpi-value" id="kpiCosts">-</div>
+                <div class="kpi-change flat" id="kpiCostsChange">-</div>
                 <div style="height: 3px; background: #ff6b35; border-radius: 2px; margin-top: 15px;"></div>
             </div>
             <div class="kpi-card">
                 <div class="kpi-title">Operating result</div>
-                <div class="kpi-value">kr 6,1M</div>
-                <div class="kpi-change up">▲ 18,9% margin 14,3%</div>
+                <div class="kpi-value" id="kpiResult">-</div>
+                <div class="kpi-change flat" id="kpiResultChange">-</div>
                 <div style="height: 3px; background: #33d755; border-radius: 2px; margin-top: 15px;"></div>
             </div>
             <div class="kpi-card">
                 <div class="kpi-title">Cash position</div>
-                <div class="kpi-value">kr 11,4M</div>
-                <div class="kpi-change" style="background: #333; color: #888;">3 bank accounts · 31 Jul 2026</div>
+                <div class="kpi-value" id="kpiCash">-</div>
+                <div class="kpi-change flat" id="kpiCashSub">-</div>
                 <div style="height: 3px; background: #00bfff; border-radius: 2px; margin-top: 15px;"></div>
             </div>
         </div>
 
         <div class="chart-grid">
             <div class="chart-card">
-                <div class="chart-title">Revenue and direct costs by month</div>
-                <canvas id="revenueChart"></canvas>
+                <div class="chart-title" id="chartTitle">Revenue and costs by month</div>
+                <canvas id="monthChart" height="140"></canvas>
             </div>
             <div class="chart-card">
                 <div class="chart-title">Cash by bank account</div>
-                <div style="padding: 20px 0;">
-                    <div style="margin-bottom: 20px;">
-                        <div style="display: flex; justify-content: space-between; margin-bottom: 8px;">
-                            <span>DNB drift</span>
-                            <span>7,2M</span>
-                        </div>
-                        <div class="bar" style="width: 85%;"></div>
-                    </div>
-                    <div style="margin-bottom: 20px;">
-                        <div style="display: flex; justify-content: space-between; margin-bottom: 8px;">
-                            <span>DNB depositum</span>
-                            <span>2,9M</span>
-                        </div>
-                        <div class="bar" style="width: 30%;"></div>
-                    </div>
-                    <div>
-                        <div style="display: flex; justify-content: space-between; margin-bottom: 8px;">
-                            <span>Nordea EUR</span>
-                            <span>1,3M</span>
-                        </div>
-                        <div class="bar" style="width: 15%;"></div>
-                    </div>
-                </div>
+                <div id="cashAccounts"></div>
             </div>
         </div>
 
         <div class="chart-grid">
             <div class="table-card">
-                <div class="chart-title">Receivables ageing</div>
+                <div class="chart-title" id="tableTitle">Result by month</div>
                 <table>
-                    <tr>
-                        <td style="color: #33d755;">Not yet due</td>
-                        <td><div class="bar" style="width: 80%;"></div></td>
-                        <td>4,26M</td>
-                    </tr>
-                    <tr>
-                        <td style="color: #00bfff;">1 – 30 d</td>
-                        <td><div class="bar" style="width: 40%;"></div></td>
-                        <td>1,80M</td>
-                    </tr>
-                    <tr>
-                        <td style="color: #ffc107;">31 – 60 d</td>
-                        <td><div class="bar" style="width: 10%;"></div></td>
-                        <td>0,70M</td>
-                    </tr>
+                    <thead>
+                        <tr><th>Month</th><th class="num">Revenue</th><th class="num">Costs</th><th class="num">Result</th></tr>
+                    </thead>
+                    <tbody id="resultTableBody"></tbody>
                 </table>
             </div>
             <div class="table-card">
-                <div class="chart-title">Payables ageing</div>
+                <div class="chart-title">Outstanding items (current)</div>
                 <table>
-                    <tr>
-                        <td style="color: #33d755;">Not yet due</td>
-                        <td><div class="bar" style="width: 75%;"></div></td>
-                        <td>3,10M</td>
-                    </tr>
-                    <tr>
-                        <td style="color: #00bfff;">1 – 30 d</td>
-                        <td><div class="bar" style="width: 28%;"></div></td>
-                        <td>1,20M</td>
-                    </tr>
-                    <tr>
-                        <td style="color: #ffc107;">31 – 60 d</td>
-                        <td><div class="bar" style="width: 10%;"></div></td>
-                        <td>0,40M</td>
-                    </tr>
+                    <tbody id="outstandingBody"></tbody>
                 </table>
             </div>
         </div>
+
+        <div class="footnote" id="footnote"></div>
     </div>
 
     <script>
-        const revenueCtx = document.getElementById('revenueChart').getContext('2d');
-        new Chart(revenueCtx, {
-            type: 'bar',
-            data: {
-                labels: ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug'],
-                datasets: [
-                    { label: '2026', data: [3.2, 3.5, 4.0, 4.5, 5.0, 5.5, 6.0, 5.5], backgroundColor: '#00bfff' },
-                    { label: '2025', data: [2.8, 3.1, 3.5, 3.8, 4.2, 4.5, 4.8, 4.5], backgroundColor: '#004d66' },
-                    { label: 'Direct costs', data: [2.0, 2.2, 2.4, 2.6, 2.8, 3.0, 3.2, 3.0], backgroundColor: '#ff6b35' }
-                ]
-            },
-            options: {
-                responsive: true,
-                plugins: {
-                    legend: { labels: { color: '#888' } }
-                },
-                scales: {
-                    y: {
-                        ticks: { color: '#888' },
-                        grid: { color: '#333' }
-                    },
-                    x: {
-                        ticks: { color: '#888' },
-                        grid: { color: '#333' }
-                    }
-                }
-            }
+    var EXACT_DATA = {
+        entity: "300",
+        entityName: "Numa Norge AS",
+        currency: "NOK",
+        bankUpdated: "24-07-2026",
+        cash: {
+            total: 3979885.46,
+            accounts: [
+                { name: "NO46 8301 9140 019 Citibank Oslo", balance: 3482607.91, updated: "Updated up to 24-07-2026" },
+                { name: "NO95 8301 9136 615 Citibank Oslo", balance: 497277.60, updated: "Updated up to 24-07-2026" },
+                { name: "BE42914045060754 IBanFirst EUR", balance: -0.05, updated: "Updated up to 31-12-2024" },
+                { name: "BE64914045060552 IBanFirst NOK", balance: 0, updated: "Updated up to 13-12-2024" },
+                { name: "Payment Export - NO95 8301 9136", balance: 0, updated: "No entries found" }
+            ]
+        },
+        outstanding: { sales: 144112.66, purchase: 5269833.35 },
+        years: {
+            "2024": [
+                [1, 1256097.29, 1477745.98, -221648.69],
+                [2, 1244785.01, 1518337.15, -273552.14],
+                [3, 1585191.61, 1537986.64, 47204.97],
+                [4, 1630059.82, 1711505.09, -81445.27],
+                [5, 2183004.23, 2017319.20, 165685.03],
+                [6, 2742547.76, 1482927.14, 1259620.62],
+                [7, 2018249.42, 2140914.95, -122665.53],
+                [8, 2621155.96, 2814483.70, -193327.74],
+                [9, 2154251.30, 1882507.71, 271743.59],
+                [10, 1833468.33, 1863942.02, -30473.69],
+                [11, 1732568.49, 1875770.88, -143202.39],
+                [12, 1382908.71, 920205.96, 462702.75]
+            ],
+            "2025": [
+                [1, 1416324.31, 1927250.22, -510925.91],
+                [2, 1404800.54, 1846385.44, -441584.90],
+                [3, 1688352.10, 1997916.50, -309564.40],
+                [4, 1664386.41, 2056046.04, -391659.63],
+                [5, 2524400.10, 2407994.66, 116405.44],
+                [6, 3584359.34, 2687278.63, 897080.71],
+                [7, 2461506.17, 2416325.75, 45180.42],
+                [8, 3170034.23, 2511799.55, 658234.68],
+                [9, 2591894.44, 2561944.56, 29949.88],
+                [10, 2151969.23, 2319704.77, -167735.54],
+                [11, 1860877.22, 2893089.40, -1032212.18],
+                [12, 1793404.27, 0, 3026237.39]
+            ],
+            "2026": [
+                [1, 1545068.30, 2214736.74, -669668.44],
+                [2, 1493628.51, 2225063.24, -731434.73],
+                [3, 1884493.17, 2325811.70, -441318.53],
+                [4, 1857532.60, 2416179.90, -558647.30],
+                [5, 2924877.36, 2490248.65, 434628.71],
+                [6, 3320347.58, 2473583.35, 846764.23],
+                [7, 2192006.02, 1155014.25, 1036991.77],
+                [8, 0, 967408.08, -967408.08],
+                [9, 0, 68062.46, -68062.46],
+                [10, 0, 16070.21, -16070.21],
+                [11, 0, 11023.40, -11023.40],
+                [12, 0, 11023.43, -11023.43]
+            ]
+        }
+    };
+
+    var MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+    var YEARS = ["2024", "2025", "2026"];
+    var state = { year: "2026", untilPeriod: 7, entity: "300" };
+    var chart = null;
+
+    function nf(v, dec) {
+        return Number(v).toLocaleString("nb-NO", { minimumFractionDigits: dec, maximumFractionDigits: dec });
+    }
+    function money(v) { return "kr " + nf(v, 2); }
+    function shortMoney(v) {
+        var a = Math.abs(v);
+        if (a >= 1000000) { return "kr " + nf(v / 1000000, 1) + "M"; }
+        if (a >= 1000) { return "kr " + nf(v / 1000, 0) + "K"; }
+        return "kr " + nf(v, 0);
+    }
+    function lastPeriodWithData(year) {
+        var rows = EXACT_DATA.years[year] || [];
+        var last = 1;
+        for (var i = 0; i < rows.length; i++) { if (rows[i][1] !== 0) { last = rows[i][0]; } }
+        return last;
+    }
+    function sum(year, until) {
+        var rows = (EXACT_DATA.years[year] || []).filter(function (r) { return r[0] <= until; });
+        return rows.reduce(function (acc, r) {
+            acc.revenue += r[1]; acc.cost += r[2]; acc.result += r[3]; return acc;
+        }, { revenue: 0, cost: 0, result: 0 });
+    }
+    function pct(cur, prev) {
+        if (!prev) { return null; }
+        return (cur - prev) / Math.abs(prev) * 100;
+    }
+    function setChange(el, value, text, goodWhenUp) {
+        var cls = "flat", arrow = "";
+        if (value !== null && value !== undefined) {
+            var good = value >= 0 ? goodWhenUp : !goodWhenUp;
+            cls = good ? "up" : "down";
+            arrow = (value >= 0 ? "\u25b2 " : "\u25bc ") + nf(Math.abs(value), 1) + "% ";
+        }
+        el.className = "kpi-change " + cls;
+        el.textContent = arrow + text;
+    }
+
+    function buildFilters() {
+        var ps = document.getElementById("periodSelect");
+        ps.innerHTML = "";
+        for (var m = 1; m <= 12; m++) {
+            var o = document.createElement("option");
+            o.value = String(m);
+            o.textContent = "Jan \u2013 " + MONTHS[m - 1] + " (" + (m < 10 ? "0" + m : m) + ")";
+            ps.appendChild(o);
+        }
+        ps.value = String(state.untilPeriod);
+        ps.onchange = function () { state.untilPeriod = parseInt(ps.value, 10); render(); };
+
+        var yb = document.getElementById("yearButtons");
+        yb.innerHTML = "";
+        YEARS.forEach(function (y) {
+            var b = document.createElement("button");
+            b.className = "btn year-btn" + (y === state.year ? " active" : "");
+            b.style.padding = "6px 12px";
+            b.textContent = y;
+            b.onclick = function () {
+                state.year = y;
+                state.untilPeriod = lastPeriodWithData(y);
+                buildFilters();
+                render();
+            };
+            yb.appendChild(b);
         });
 
-        // Load data from API
-        window.addEventListener('load', async () => {
-            try {
-                const response = await fetch('/api/status');
-                const data = await response.json();
-                if (data.authenticated) {
-                    // Load and update dashboard data
-                    console.log('Dashboard authenticated');
+        document.getElementById("resetFilters").onclick = function () {
+            state.year = "2026";
+            state.untilPeriod = lastPeriodWithData("2026");
+            document.getElementById("entitySelect").value = "300";
+            state.entity = "300";
+            buildFilters();
+            render();
+        };
+
+        var es = document.getElementById("entitySelect");
+        es.onchange = function () { state.entity = es.value; render(); };
+    }
+
+    function renderChart() {
+        var rows = EXACT_DATA.years[state.year] || [];
+        var prevYear = String(parseInt(state.year, 10) - 1);
+        var prevRows = EXACT_DATA.years[prevYear] || [];
+        var labels = [], rev = [], cost = [], prevRev = [];
+        rows.forEach(function (r) {
+            if (r[0] > state.untilPeriod) { return; }
+            labels.push(MONTHS[r[0] - 1]);
+            rev.push(r[1] / 1000000);
+            cost.push(r[2] / 1000000);
+            var p = prevRows.filter(function (x) { return x[0] === r[0]; })[0];
+            prevRev.push(p ? p[1] / 1000000 : 0);
+        });
+        var ds = [
+            { label: state.year + " revenue", data: rev, backgroundColor: "#00bfff" },
+            { label: "Costs " + state.year, data: cost, backgroundColor: "#ff6b35" }
+        ];
+        if (prevRows.length) {
+            ds.splice(1, 0, { label: prevYear + " revenue", data: prevRev, backgroundColor: "#1a6e8e" });
+        }
+        var ctx = document.getElementById("monthChart");
+        if (!window.Chart) { return; }
+        if (chart) { chart.destroy(); }
+        chart = new Chart(ctx, {
+            type: "bar",
+            data: { labels: labels, datasets: ds },
+            options: {
+                responsive: true,
+                plugins: { legend: { labels: { color: "#888" } } },
+                scales: {
+                    y: { ticks: { color: "#888", callback: function (v) { return v + "M"; } }, grid: { color: "#333" } },
+                    x: { ticks: { color: "#888" }, grid: { color: "#333" } }
                 }
-            } catch (error) {
-                console.log('Not authenticated');
             }
         });
+    }
+
+    function renderCash() {
+        var box = document.getElementById("cashAccounts");
+        var accs = EXACT_DATA.cash.accounts;
+        var max = Math.max.apply(null, accs.map(function (a) { return Math.abs(a.balance); }).concat([1]));
+        box.innerHTML = accs.map(function (a) {
+            var w = Math.max(Math.abs(a.balance) / max * 100, 0.5);
+            return '<div class="acc-row"><div class="acc-head"><span>' + a.name + '<div class="acc-sub">' + a.updated + '</div></span>' +
+                '<span>' + shortMoney(a.balance) + '</span></div><div class="bar" style="width: ' + w.toFixed(1) + '%;"></div></div>';
+        }).join("");
+    }
+
+    function renderTables() {
+        var rows = (EXACT_DATA.years[state.year] || []).filter(function (r) { return r[0] <= state.untilPeriod; });
+        document.getElementById("tableTitle").textContent = "Result by month " + state.year;
+        document.getElementById("resultTableBody").innerHTML = rows.map(function (r) {
+            var cls = r[3] >= 0 ? "pos" : "neg";
+            return "<tr><td>" + MONTHS[r[0] - 1] + " " + state.year + "</td><td class='num'>" + money(r[1]) +
+                "</td><td class='num'>" + money(r[2]) + "</td><td class='num " + cls + "'>" + money(r[3]) + "</td></tr>";
+        }).join("");
+
+        var o = EXACT_DATA.outstanding;
+        document.getElementById("outstandingBody").innerHTML =
+            "<tr><td>Sales - outstanding receivables</td><td class='num'>" + money(o.sales) + "</td></tr>" +
+            "<tr><td>Purchase - outstanding payables</td><td class='num'>" + money(o.purchase) + "</td></tr>" +
+            "<tr><td>Net position</td><td class='num " + (o.sales - o.purchase >= 0 ? "pos" : "neg") + "'>" + money(o.sales - o.purchase) + "</td></tr>" +
+            "<tr><td>Bank / cash total</td><td class='num'>" + money(EXACT_DATA.cash.total) + "</td></tr>";
+    }
+
+    function render() {
+        var notice = document.getElementById("notice");
+        if (state.entity !== "300") {
+            notice.style.display = "block";
+            notice.textContent = "No data for company " + state.entity + ". This Exact Online login only has access rights for company 300 - Numa Norge AS.";
+        } else {
+            notice.style.display = "none";
+        }
+
+        var prevYear = String(parseInt(state.year, 10) - 1);
+        var cur = sum(state.year, state.untilPeriod);
+        var prev = EXACT_DATA.years[prevYear] ? sum(prevYear, state.untilPeriod) : null;
+
+        document.getElementById("kpiRevenue").textContent = shortMoney(cur.revenue);
+        document.getElementById("kpiCosts").textContent = shortMoney(cur.cost);
+        document.getElementById("kpiResult").textContent = shortMoney(cur.result);
+        document.getElementById("kpiCash").textContent = shortMoney(EXACT_DATA.cash.total);
+
+        setChange(document.getElementById("kpiRevenueChange"), prev ? pct(cur.revenue, prev.revenue) : null,
+            prev ? "vs " + prevYear + " (" + shortMoney(prev.revenue) + ")" : "no comparison year", true);
+        setChange(document.getElementById("kpiCostsChange"), prev ? pct(cur.cost, prev.cost) : null,
+            prev ? "vs " + prevYear + " (" + shortMoney(prev.cost) + ")" : "no comparison year", false);
+        setChange(document.getElementById("kpiResultChange"), prev ? pct(cur.result, prev.result) : null,
+            (prev ? "vs " + prevYear + " (" + shortMoney(prev.result) + ") \u00b7 " : "") + "margin " + nf(cur.revenue ? cur.result / cur.revenue * 100 : 0, 1) + "%", true);
+
+        var accCount = EXACT_DATA.cash.accounts.filter(function (a) { return a.balance !== 0; }).length;
+        var cashEl = document.getElementById("kpiCashSub");
+        cashEl.className = "kpi-change flat";
+        cashEl.textContent = accCount + " bank accounts with balance \u00b7 " + EXACT_DATA.bankUpdated;
+
+        document.getElementById("chartTitle").textContent = "Revenue and costs by month " + state.year;
+        document.getElementById("footnote").textContent = "Source: Exact Online financial dashboard, company 300 - Numa Norge AS. Figures per financial period, currency NOK. Bank balances updated " + EXACT_DATA.bankUpdated + ".";
+
+        renderChart();
+        renderCash();
+        renderTables();
+    }
+
+    document.addEventListener("DOMContentLoaded", function () {
+        state.untilPeriod = lastPeriodWithData(state.year);
+        buildFilters();
+        render();
+    });
     </script>
-    <script src="/dashboard-api.js"></script>
-    <script src="/result-comparison.js"></script>
 </body>
 </html>
