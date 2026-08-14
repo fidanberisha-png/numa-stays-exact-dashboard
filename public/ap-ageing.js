@@ -544,7 +544,7 @@ rows.forEach(function (r) {
 var risk = Math.abs(r.t.b4 || 0) > 0.004 ? ' risk' : '';
 var activeStyle = (ACTIVE_ENT === r.human) ? ' style="background:#19212c;box-shadow:inset 3px 0 0 #00bfff;"' : '';
 h += '<tr class="row' + risk + '" data-ent="' + esc(r.human) + '"' + activeStyle + '>';
-h += '<td>' + esc(r.human) + ' - ' + esc(r.name) + '</td><td class="num">' + r.count + '</td>';
+h += '<td>' + esc(r.human) + ' - ' + esc(r.name) + '</td><td class="num"><span class="numaDrop" data-ent="' + esc(r.human) + '" style="cursor:pointer;text-decoration:underline;color:#00bfff;font-weight:700;">' + r.count + ' ' + (ACTIVE_ENT === r.human ? '\u25b4' : '\u25be') + '</span></td>';
 h += money(r.t.b1) + money(r.t.b2, 'warn') + money(r.t.b3, 'hot') + money(r.t.b4, 'bad') + money(r.t.total, 'strong');
 h += '<td class="num">' + (r.t.average || 0) + '</td></tr>';
 if (ACTIVE_ENT === r.human) {
@@ -565,9 +565,10 @@ h += '</tbody><tfoot><tr><td>TOTAL</td><td>' + rows.length + ' entities - ' + ac
 h += money(grand.b1) + money(grand.b2) + money(grand.b3) + money(grand.b4) + money(grand.total);
 h += '<td class="num">' + grand.average + '</td></tr></tfoot></table>';
 box.innerHTML = h;
-var trs = box.querySelectorAll('tr.row');
-for (var i = 0; i < trs.length; i++) {
-trs[i].onclick = function () {
+var drops = box.querySelectorAll('.numaDrop');
+for (var i = 0; i < drops.length; i++) {
+drops[i].onclick = function (ev) {
+if (ev && ev.stopPropagation) ev.stopPropagation();
 var ent = this.getAttribute('data-ent');
 ACTIVE_ENT = (ACTIVE_ENT === ent) ? null : ent;
 renderSummary();
