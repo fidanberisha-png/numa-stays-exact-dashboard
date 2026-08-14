@@ -569,7 +569,7 @@ var drops = box.querySelectorAll('.numaDrop');
 for (var i = 0; i < drops.length; i++) {
 drops[i].onclick = function (ev) {
 if (ev && ev.stopPropagation) ev.stopPropagation();
-var ent = this.getAttribute('data-ent');
+var ent = Number(this.getAttribute('data-ent'));
 ACTIVE_ENT = (ACTIVE_ENT === ent) ? null : ent;
 renderSummary();
 };
