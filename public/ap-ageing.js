@@ -255,3 +255,188 @@ shell();
 conn();
 loadDivisions();
 setInterval(function () { conn(); load(); }, 300000);
+
+// ===== NUMA: entity whitelist + consolidated view + UI extensions =====
+(function () {
+  if (window.__numaPatch) return;
+  window.__numaPatch = 1;
+  var NF = window.fetch, AMT = 'all', LAST = null, SIG = '';
+  var ENT = [
+    ['HQ', 1000, 3784237, 'Numa Group SE'],
+    ['DACH', 900, 3745758, 'Numa Deutschland GmbH'],
+    ['DACH', 901, 3745759, 'COSI Hamburg S\u00fcd GmbH'],
+    ['DACH', 902, 3745760, 'COSI K\u00f6ln Nord GmbH'],
+    ['DACH', 801, 3745740, 'Numa \u00d6sterreich GmbH'],
+    ['DACH', 500, 3751399, 'Numa Prague s.r.o.'],
+    ['DACH', 302, 3708480, 'Numa Schweiz GmbH'],
+    ['WEST', 99, 3642741, 'Numa Netherlands B.V.'],
+    ['WEST', 104, 2657065, 'Numa Nederland Operations B.V.'],
+    ['WEST', 400, 3383979, 'YAYS Frankrijklei B.V.'],
+    ['WEST', 401, 3693157, 'Numa Belgium North SRL'],
+    ['WEST', 300, 3706020, 'Numa Norge AS'],
+    ['WEST', 301, 3716405, 'numa Danmark ApS'],
+    ['WEST', 203, 3741441, 'NUMA France S.A.S.'],
+    ['WEST', 600, 3717706, 'numa stays UK Ltd'],
+    ['WEST', 610, 3900740, 'Native Places Limited'],
+    ['SOUTH', 700, 3725452, 'Numa Stays Espa\u00f1a S.L.'],
+    ['SOUTH', 710, 3732987, 'NUMA PORTUGAL, UNIPESSOAL, LDA.'],
+    ['SOUTH', 720, 3745729, 'Numa Italia S.r.l.']
+    ];
+  window.NUMA_ENTITIES = ENT;
+  function jr(o) { return new Response(JSON.stringify(o), { status: 200, headers: { 'Content-Type': 'application/json' } }); }
+  function nap(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
+  function eur(n) { var s = Math.abs(n).toLocaleString('de-DE', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).replace(/\./g, ' '); return (n < 0 ? '\u2212' : '') + s + ' \u20ac'; }
+  function pnum(t) { var s = (t || '').replace(/\u2212/g, '-').replace(/[^0-9,\-]/g, '').replace(/,/g, '.'); var v = parseFloat(s); return isNaN(v) ? 0 : v; }
+  async function getOne(ep, div, date, rt) {
+    for (var a = 0; a < 3; a++) {
+      try {
+        var r = await NF.call(window, ep + '?division=' + div + '&date=' + date + '&referTo=' + rt, { credentials: 'same-origin' });
+        var j = await r.json();
+        var bad = j && j.errors && !Array.isArray(j.errors) && Object.keys(j.errors).length > 0;
+        if (r.status === 200 && !bad) return j;
+      } catch (e) { }
+      await nap(1500);
+    }
+    return { accounts: [], totals: { b1: 0, b2: 0, b3: 0, b4: 0, total: 0 }, itemCount: 0, __err: 1 };
+  }
+  window.fetch = function (input, init) {
+    var url = (typeof input === 'string') ? input : ((input && input.url) || '');
+    if (url.indexOf('/api/divisions') > -1) {
+      return NF.call(window, input, init).then(function (r) { return r.json(); }).then(function (j) {
+        var out = ENT.map(function (m) { return { code: m[2], human: m[1], region: m[0], name: m[3], label: m[1] + ' - ' + m[3], currency: 'EUR' }; });
+        return jr({ current: j && j.current, divisions: out });
+      });
+    }
+    if (url.indexOf('/api/ageing-') > -1 && url.indexOf('division=selected') > -1) {
+      var u = new URL(url, location.origin), ep = u.pathname, date = u.searchParams.get('date'), rt = u.searchParams.get('referTo');
+      return (async function () {
+        var acc = [], T = { b1: 0, b2: 0, b3: 0, b4: 0, total: 0 }, n = 0, errs = [], per = [];
+        for (var i = 0; i < ENT.length; i++) {
+          var m = ENT[i], j = await getOne(ep, m[2], date, rt), t = j.totals || {};
+          ['b1', 'b2', 'b3', 'b4', 'total'].forEach(function (k) { T[k] += (Number(t[k]) || 0); });
+          n += Number(j.itemCount) || 0;
+          if (j.__err) errs.push(m[1] + ': not available');
+          per.push({ region: m[0], human: m[1], name: m[3], b1: Number(t.b1) || 0, b2: Number(t.b2) || 0, b3: Number(t.b3) || 0, b4: Number(t.b4) || 0, total: Number(t.total) || 0, accounts: Number(j.itemCount) || 0 });
+          (Array.isArray(j.accounts) ? j.accounts : []).forEach(function (a) { a.name = (a.name || '') + ' [' + m[1] + ']'; a.entity = m[1]; a.region = m[0]; acc.push(a); });
+          await nap(250);
+        }
+        acc.sort(function (x, y) { return (Number(y.total) || 0) - (Number(x.total) || 0); });
+        window.NUMA_PER_ENTITY = per;
+        LAST = { totals: T, accounts: acc };
+        SIG = '';
+        return jr({ referTo: rt, referenceDate: date, division: ENT.length + ' selected entities (HQ/DACH/WEST/SOUTH)', consolidated: true, currency: 'EUR', source: 'Exact Online', accounts: acc, totals: T, itemCount: n, errors: errs, lastUpdated: new Date().toISOString() });
+      })();
+    }
+    var p = NF.call(window, input, init);
+    if (url.indexOf('/api/ageing-') > -1) {
+      return p.then(function (r) {
+        return r.clone().json().then(function (j) { LAST = { totals: j.totals || null, accounts: Array.isArray(j.accounts) ? j.accounts : [] }; SIG = ''; return r; }).catch(function () { return r; });
+      });
+    }
+    return p;
+  };
+  function fillSelect() {
+    var sel = document.getElementById('company');
+    if (!sel || sel.dataset.numa === '1') return;
+    var cur = sel.value;
+    sel.innerHTML = '';
+    var first = document.createElement('option');
+    first.value = 'selected';
+    first.text = 'Consolidated (' + ENT.length + ' selected entities)';
+    sel.appendChild(first);
+    ['HQ', 'DACH', 'WEST', 'SOUTH'].forEach(function (reg) {
+      var g = document.createElement('optgroup');
+      g.label = reg;
+      ENT.filter(function (m) { return m[0] === reg; }).forEach(function (m) {
+        var op = document.createElement('option');
+        op.value = String(m[2]);
+        op.text = m[1] + ' - ' + m[3];
+        g.appendChild(op);
+      });
+      sel.appendChild(g);
+    });
+    sel.dataset.numa = '1';
+    var keep = [].slice.call(sel.options).some(function (o) { return o.value === cur; });
+    sel.value = keep ? cur : 'selected';
+    if (!keep && sel.onchange) sel.onchange();
+  }
+  function ui() {
+    fillSelect();
+    var tb = document.querySelector('table');
+    if (!tb) return;
+    var bs = document.getElementById('bucket');
+    if (bs && !document.getElementById('amount')) {
+      var w = document.createElement('div');
+      w.className = 'ctl';
+      var lab = document.createElement('label');
+      lab.setAttribute('for', 'amount');
+      lab.textContent = 'AMOUNT';
+      var s = document.createElement('select');
+      s.id = 'amount';
+      [['all', 'All amounts'], ['pos', 'Positive only (+)'], ['neg', 'Negative only (\u2212)']].forEach(function (o) {
+        var op = document.createElement('option');
+        op.value = o[0];
+        op.text = o[1];
+        s.appendChild(op);
+      });
+      s.value = AMT;
+      s.onchange = function () { AMT = s.value; SIG = ''; ui(); };
+      w.appendChild(lab);
+      w.appendChild(s);
+      bs.parentElement.parentElement.insertBefore(w, bs.parentElement.nextSibling);
+    }
+    [].slice.call(tb.querySelectorAll('thead th')).forEach(function (th) { if (th.textContent.indexOf('Over 90') > -1) th.textContent = th.textContent.replace('Over 90', '> 90'); });
+    var rows = [].slice.call(tb.querySelectorAll('tbody tr')).filter(function (tr) { return tr.children.length === 8; });
+    rows.forEach(function (tr) {
+      var v = pnum(tr.children[6].textContent);
+      tr.style.display = ((AMT === 'pos' && v < 0) || (AMT === 'neg' && v >= 0)) ? 'none' : '';
+    });
+    var D = LAST || { accounts: [], totals: null };
+    var use = (D.accounts || []).filter(function (a) { var t = Number(a.total) || 0; return AMT === 'all' || (AMT === 'pos' ? t >= 0 : t < 0); });
+    var S = [0, 0, 0, 0, 0];
+    if (AMT === 'all' && D.totals) {
+      S = [Number(D.totals.b1) || 0, Number(D.totals.b2) || 0, Number(D.totals.b3) || 0, Number(D.totals.b4) || 0, Number(D.totals.total) || 0];
+    } else {
+      use.forEach(function (a) { S[0] += Number(a.b1) || 0; S[1] += Number(a.b2) || 0; S[2] += Number(a.b3) || 0; S[3] += Number(a.b4) || 0; S[4] += Number(a.total) || 0; });
+    }
+    var sel = document.getElementById('company');
+    var isAP = (document.getElementById('dashboard') || {}).value === 'ap';
+    var who = isAP ? 'suppliers' : 'customers';
+    var cnt = use.length;
+    var tag = AMT === 'all' ? '' : (AMT === 'pos' ? ' \u00b7 positive only' : ' \u00b7 negative only');
+    var f = tb.querySelector('tfoot tr');
+    if (f && f.children.length === 8) {
+      var c = f.children;
+      c[0].textContent = 'TOTAL';
+      c[1].textContent = cnt + ' ' + who + tag;
+      [2, 3, 4, 5, 6].forEach(function (i, k) { c[i].textContent = eur(S[k]); c[i].style.color = S[k] < 0 ? '#7fb2ff' : ''; });
+      c[7].textContent = '';
+      f.style.fontWeight = '700';
+    }
+    var cards = [].slice.call(document.querySelectorAll('#kpis .kpi'));
+    if (cards.length === 5) {
+      var ent = (sel && sel.value === 'selected') ? (ENT.length + ' entities') : ((sel && sel.selectedOptions[0]) ? sel.selectedOptions[0].text : '1 entity');
+      cards.forEach(function (k, i) {
+        var bar = k.querySelector('.bar');
+        if (bar) bar.remove();
+        var sub = k.querySelector('.s'), v = k.querySelector('.v'), t = k.querySelector('.t');
+        if (i === 0) {
+          if (v) v.textContent = eur(S[4]);
+          if (sub) sub.textContent = ent + ' \u00b7 ' + cnt + ' ' + who + tag;
+        } else {
+          var key = ['b1', 'b2', 'b3', 'b4'][i - 1];
+          if (v) v.textContent = eur(S[i - 1]);
+          if (sub) sub.textContent = use.filter(function (a) { return (Number(a[key]) || 0) !== 0; }).length + ' ' + who + ' in this bucket';
+          if (t && t.textContent.indexOf('OVER 90') > -1) t.textContent = '> 90 DAYS';
+        }
+      });
+    }
+  }
+  setInterval(function () {
+    var tb = document.querySelector('table tbody');
+    if (!tb) { fillSelect(); return; }
+    var sig = tb.children.length + '|' + (tb.firstElementChild ? tb.firstElementChild.textContent.slice(0, 40) : '') + '|' + AMT + '|' + (document.getElementById('amount') ? 1 : 0);
+    if (sig !== SIG) { SIG = sig; ui(); }
+  }, 700);
+  fillSelect();
+})();
