@@ -558,7 +558,13 @@ h += '<tr><td>' + esc(vendorLabel(a.name, r.human)) + '</td>';
 h += money(a.b1) + money(a.b2, 'warn') + money(a.b3, 'hot') + money(a.b4, 'bad') + money(a.total, 'strong');
 h += '<td class="num">' + (a.average === null || a.average === undefined ? '' : a.average) + '</td></tr>';
 });
-h += '</tbody></table></td></tr>';
+h += '</tbody>';
+if (r.list.length) {
+h += '<tfoot><tr class="subtotal"><td><b>Subtotal ' + esc(r.human) + ' - ' + esc(r.name) + '</b></td>';
+h += money(r.t.b1) + money(r.t.b2) + money(r.t.b3) + money(r.t.b4) + money(r.t.total);
+h += '<td class="num"><b>' + (r.t.average || 0) + '</b></td></tr></tfoot>';
+}
+h += '</table></td></tr>';
 }
 });
 h += '</tbody><tfoot><tr><td>TOTAL</td><td>' + rows.length + ' entities - ' + acc.length + ' ' + who.toLowerCase() + '</td>';
