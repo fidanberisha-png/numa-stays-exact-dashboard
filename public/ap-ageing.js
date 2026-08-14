@@ -337,7 +337,7 @@ setInterval(function () { conn(); load(); }, 300000);
   };
   function fillSelect() {
     var sel = document.getElementById('company');
-    if (!sel || sel.dataset.numa === '1') return;
+    if (!sel || (sel.querySelector('option[value="selected"]') && sel.options.length === ENT.length + 1)) return;
     var cur = sel.value;
     sel.innerHTML = '';
     var first = document.createElement('option');
@@ -435,8 +435,10 @@ setInterval(function () { conn(); load(); }, 300000);
   setInterval(function () {
     var tb = document.querySelector('table tbody');
     if (!tb) { fillSelect(); return; }
-    var sig = tb.children.length + '|' + (tb.firstElementChild ? tb.firstElementChild.textContent.slice(0, 40) : '') + '|' + AMT + '|' + (document.getElementById('amount') ? 1 : 0);
+    var sel0 = document.getElementById('company'); var sig = tb.children.length + '|' + (tb.firstElementChild ? tb.firstElementChild.textContent.slice(0, 40) : '') + '|' + AMT + '|' + (document.getElementById('amount') ? 1 : 0) + '|' + (sel0 ? sel0.options.length + ':' + sel0.value : '');
     if (sig !== SIG) { SIG = sig; ui(); }
   }, 700);
   fillSelect();
 })();
+
+if (typeof loadDivisions === 'function') { setTimeout(function () { try { loadDivisions(); } catch (e) { } }, 0); }
