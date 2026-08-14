@@ -236,20 +236,11 @@ function loadDivisions() {
     if (!sel || !j || !j.divisions) { return; }
     var cur = j.current ? String(j.current) : null;
     var html = '<option value="consolidated">Consolidated (all entities)</option>';
-    for (var i = 0; i < j.divisions.length; i++) {
-      var d = j.divisions[i];
-      html += '<option value="' + esc(d.code) + '">' + esc(d.label) + '</option>';
-    }
+    for (var i = 0; i < j.divisions.length; i++) { var d = j.divisions[i]; html += '<option value="' + esc(d.code) + '">' + esc(d.label) + '</option>'; }
     sel.innerHTML = html;
     var def = 'consolidated';
-    for (var k = 0; k < j.divisions.length; k++) {
-      var code = String(j.divisions[k].code);
-      var name = String(j.divisions[k].name || '');
-      if ((cur && code === cur) || /Numa Norge/i.test(name)) { def = code; break; }
-    }
-    sel.value = def;
-    S.division = sel.value;
-    load();
+    for (var k = 0; k < j.divisions.length; k++) { var code = String(j.divisions[k].code); var name = String(j.divisions[k].name || ''); if ((cur && code === cur) || /Numa Norge/i.test(name)) { def = code; break; } }
+    sel.value = def; S.division = sel.value; load();
   }).catch(function () {});
 }
 function onDashboardChange(v) {
@@ -257,13 +248,9 @@ function onDashboardChange(v) {
   var h1 = document.querySelector('h1');
   if (v === 'ar') {
     if (h1) { h1.textContent = 'Ageing analysis: A/R'; }
-    var box = el('table');
-    if (box) { box.className = 'state'; box.innerHTML = 'A/R Ageing is coming soon. Switch back to <b>AP Ageing</b> to view payables.'; }
+    var box = el('table'); if (box) { box.className = 'state'; box.innerHTML = 'A/R Ageing is coming soon. Switch back to <b>AP Ageing</b> to view payables.'; }
     el('kpis').innerHTML = '';
-  } else {
-    if (h1) { h1.textContent = 'Ageing analysis: A/P'; }
-    load();
-  }
+  } else { if (h1) { h1.textContent = 'Ageing analysis: A/P'; } load(); }
 }
 
 shell();
