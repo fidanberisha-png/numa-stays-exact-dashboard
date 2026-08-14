@@ -25,12 +25,18 @@ module.exports = function (getToken) {
   async function getAllDivisions(h) {
     if (divisionsCache) return divisionsCache;
     const cur = await getCurrentDivision(h);
-    const url = BASE + '/' + cur + '/system/Divisions?$select=Code,Description,HID&$orderby=Code';
+    // Do NOT $select (the Division OData model varies); fetch all fields and pick safely.
+    const url = BASE + '/' + cur + '/system/Divisions?$orderby=Code';
     const r = await axios.get(url, { headers: h });
     const d = r.data && r.data.d ? r.data.d : r.data;
     const rows = (d && d.results) ? d.results : (Array.isArray(d) ? d : []);
     divisionsCache = rows.map(function (x) {
-      return { code: x.Code, name: x.Description || ('Division ' + x.Code), label: x.Code + ' - ' + (x.Description || x.Code) };
+      // x.Code is the INTERNAL division number used in API URLs.
+      // The human-facing code (e.g. 300) may live in HID/DivisionCode/CustomerCode; fall back gracefully.
+      const human = (x.HID !== undefined && x.HID !== null) ? x.HID : (x.DivisionCode !== undefined && x.DivisionCode !== null ? x.DivisionCode : null);
+      const name = x.Description || x.CustomerName || ('Division ' + x.Code);
+      const prefix = human !== null && human !== '' ? (human + ' - ') : '';
+      return { code: x.Code, human: human, name: name, label: prefix + name };
     });
     return divisionsCache;
   }
