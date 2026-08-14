@@ -356,9 +356,9 @@ setInterval(function () { conn(); load(); }, 300000);
       sel.appendChild(g);
     });
     sel.dataset.numa = '1';
-    var keep = !FIRST && [].slice.call(sel.options).some(function (o) { return o.value === cur; }); FIRST = false;
-    sel.value = keep ? cur : 'selected';
-    if (!keep && sel.onchange) sel.onchange();
+    var want = 'selected'; try { want = sessionStorage.getItem('numaDiv') || 'selected'; } catch (e) { } var keep = [].slice.call(sel.options).some(function (o) { return o.value === want; });
+    sel.value = keep ? want : 'selected'; if (!sel.__numaLs) { sel.__numaLs = 1; sel.addEventListener('change', function () { try { sessionStorage.setItem('numaDiv', sel.value); } catch (e) { } }); }
+    if (sel.value !== cur && sel.onchange) sel.onchange();
   }
   function ui() {
     fillSelect();
