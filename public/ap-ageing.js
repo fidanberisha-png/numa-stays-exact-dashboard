@@ -13,7 +13,7 @@ var COLS = [
 function el(id) { return document.getElementById(id); }
 function fmt(v) {
   var n = Number(v || 0);
-  return n.toLocaleString('nb-NO', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  return n.toLocaleString('nb-NO', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' €';
 }
 function esc(v) {
   var s = (v === null || v === undefined) ? '' : String(v);
@@ -96,7 +96,7 @@ function stamp() {
   var d = S.data;
   var w = d.lastUpdated ? new Date(d.lastUpdated) : new Date();
   var by = d.referTo === 'duedate' ? 'due date' : 'invoice date';
-  el('asof').innerHTML = 'As of <b>' + esc(d.referenceDate || el('refdate').value) + '</b> - aged by ' + by + ' - live from Exact Online, refreshed ' + w.toLocaleString('nb-NO');
+  el('asof').innerHTML = 'As of <b>' + esc(d.referenceDate || el('refdate').value) + '</b> - aged by ' + by + ' - live from Exact Online, refreshed ' + w.toLocaleString('nb-NO') + ' - all amounts converted to <b>EUR</b>';
   var extra = '';
   if (d.errors && Object.keys(d.errors).length) { extra = ' - notes: ' + esc(JSON.stringify(d.errors)); }
   el('note').innerHTML = 'Division ' + esc(d.division) + ' - source ' + esc(d.source) + ' - ' + (d.itemCount || 0) + ' open items' + extra;
@@ -141,7 +141,7 @@ function totalsOf(list) {
 function kpis(list, t) {
   var colors = { b1: 'var(--green)', b2: 'var(--yellow)', b3: 'var(--orange)', b4: 'var(--red)' };
   var labels = { b1: '0 - 30 DAYS', b2: '31 - 60 DAYS', b3: '61 - 90 DAYS', b4: 'OVER 90 DAYS' };
-  var h = '<div class="kpi big"><div class="t">TOTAL OUTSTANDING</div><div class="v">' + fmt(t.total) + '</div>';
+  var h = '<div class="kpi big"><div class="t">TOTAL OUTSTANDING (EUR)</div><div class="v">' + fmt(t.total) + '</div>';
   h += '<div class="s">' + list.length + ' suppliers - average ' + t.average + ' days</div></div>';
   ['b1', 'b2', 'b3', 'b4'].forEach(function (k) {
     var p = t.total ? Math.round(t[k] / t.total * 100) : 0;
