@@ -70,7 +70,8 @@ function load() {
   box.className = 'state';
   box.textContent = 'Loading live data from Exact Online...';
   var div = (S.division || (el('company') ? el('company').value : '') || 'consolidated');
-  var url = '/api/ageing-ap?referTo=' + encodeURIComponent(el('referto').value) + '&date=' + encodeURIComponent(el('refdate').value) + '&division=' + encodeURIComponent(div);
+  var endpoint = (S.dashboard === 'ar') ? '/api/ageing-ar' : '/api/ageing-ap';
+  var url = endpoint + '?referTo=' + encodeURIComponent(el('referto').value) + '&date=' + encodeURIComponent(el('refdate').value) + '&division=' + encodeURIComponent(div);
   fetch(url, { credentials: 'same-origin' }).then(function (r) {
     return r.json().then(function (j) { return { ok: r.ok, j: j }; });
   }).then(function (res) {
@@ -246,11 +247,8 @@ function loadDivisions() {
 function onDashboardChange(v) {
   S.dashboard = v;
   var h1 = document.querySelector('h1');
-  if (v === 'ar') {
-    if (h1) { h1.textContent = 'Ageing analysis: A/R'; }
-    var box = el('table'); if (box) { box.className = 'state'; box.innerHTML = 'A/R Ageing is coming soon. Switch back to <b>AP Ageing</b> to view payables.'; }
-    el('kpis').innerHTML = '';
-  } else { if (h1) { h1.textContent = 'Ageing analysis: A/P'; } load(); }
+  if (h1) { h1.textContent = (v === 'ar') ? 'Ageing analysis: A/R' : 'Ageing analysis: A/P'; }
+  load();
 }
 
 shell();
