@@ -5,7 +5,8 @@ const express = require('express');
 const axios = require('axios');
 const REGION = process.env.EXACT_REGION || 'nl';
 const BASE = 'https://start.exactonline.' + REGION + '/api/v1';
-const SOURCES = ['read/financial/AgingPayablesList', 'read/financial/PayablesList'];
+const AP_SOURCES = ['read/financial/AgingPayablesList', 'read/financial/PayablesList'];
+const AR_SOURCES = ['read/financial/AgingReceivablesList', 'read/financial/ReceivablesList'];
 module.exports = function (getToken) {
   const router = express.Router();
   let currentDivisionCache = null;
@@ -117,11 +118,11 @@ module.exports = function (getToken) {
     list.sort(function (x, y) { return String(x.code).localeCompare(String(y.code)); });
     return { accounts: list, totals: totals };
   }
-  async function fetchApRows(division, h, errors) {
+  async function fetchRowsFor(division, sources, h, errors) {
     let rows = null; let source = null;
-    for (let i = 0; i < SOURCES.length && !rows; i++) {
-      try { rows = await fetchAll(division, SOURCES[i], h, 40); source = SOURCES[i]; }
-      catch (e) { errors[division + ':' + SOURCES[i]] = e.response && e.response.data ? e.response.data : e.message; rows = null; }
+    for (let i = 0; i < sources.length && !rows; i++) {
+      try { rows = await fetchAll(division, sources[i], h, 40); source = sources[i]; }
+      catch (e) { errors[division + ':' + sources[i]] = e.response && e.response.data ? e.response.data : e.message; rows = null; }
     }
     return { rows: rows, source: source };
   }
@@ -137,33 +138,35 @@ module.exports = function (getToken) {
       res.status(500).json({ error: 'Divisions failed', details: e.response && e.response.data ? e.response.data : e.message });
     }
   });
-  router.get('/api/ageing-ap', async function (req, res) {
-    const h = headers();
-    if (!h) return res.status(401).json({ error: 'Not authenticated' });
-    const referTo = req.query.referTo === 'duedate' ? 'duedate' : 'date';
-    const refDate = req.query.date ? new Date(req.query.date) : new Date();
-    const wanted = req.query.division ? String(req.query.division) : null;
-    const consolidated = wanted === 'consolidated' || wanted === 'all';
-    const out = { referTo: referTo, referenceDate: iso(refDate), division: null, consolidated: consolidated, source: null, accounts: [], totals: { b1: 0, b2: 0, b3: 0, b4: 0, total: 0 }, itemCount: 0, errors: {}, lastUpdated: new Date().toISOString() };
-    let targets = [];
-    try {
-      if (consolidated) { const all = await getAllDivisions(h); targets = all.map(function (d) { return d.code; }); }
-      else if (wanted) { targets = [wanted]; }
-      else { targets = [await getCurrentDivision(h)]; }
-    } catch (e) {
-      out.errors.division = e.response && e.response.data ? e.response.data : e.message;
-      return res.status(500).json(out);
+  async function handleAgeing(req, res, sources) {
+      const h = headers();
+      if (!h) return res.status(401).json({ error: 'Not authenticated' });
+      const referTo = req.query.referTo === 'duedate' ? 'duedate' : 'date';
+      const refDate = req.query.date ? new Date(req.query.date) : new Date();
+      const wanted = req.query.division ? String(req.query.division) : null;
+      const consolidated = wanted === 'consolidated' || wanted === 'all';
+      const out = { referTo: referTo, referenceDate: iso(refDate), division: null, consolidated: consolidated, source: null, accounts: [], totals: { b1: 0, b2: 0, b3: 0, b4: 0, total: 0 }, itemCount: 0, errors: {}, lastUpdated: new Date().toISOString() };
+      let targets = [];
+      try {
+        if (consolidated) { const all = await getAllDivisions(h); targets = all.map(function (d) { return d.code; }); }
+        else if (wanted) { targets = [wanted]; }
+        else { targets = [await getCurrentDivision(h)]; }
+      } catch (e) {
+        out.errors.division = e.response && e.response.data ? e.response.data : e.message;
+        return res.status(500).json(out);
+      }
+      out.division = consolidated ? 'consolidated' : targets[0];
+      const map = {}; let totalRows = 0; let gotAny = false;
+      for (let i = 0; i < targets.length; i++) {
+        const r = await fetchRowsFor(targets[i], sources, h, out.errors);
+        if (r.rows) { gotAny = true; if (!out.source) out.source = r.source; totalRows += r.rows.length; accumulate(map, r.rows, referTo, refDate); }
+      }
+      if (!gotAny) return res.status(502).json(out);
+      const done = finalize(map);
+      out.accounts = done.accounts; out.totals = done.totals; out.itemCount = totalRows;
+      res.json(out);
     }
-    out.division = consolidated ? 'consolidated' : targets[0];
-    const map = {}; let totalRows = 0; let gotAny = false;
-    for (let i = 0; i < targets.length; i++) {
-      const r = await fetchApRows(targets[i], h, out.errors);
-      if (r.rows) { gotAny = true; if (!out.source) out.source = r.source; totalRows += r.rows.length; accumulate(map, r.rows, referTo, refDate); }
-    }
-    if (!gotAny) return res.status(502).json(out);
-    const done = finalize(map);
-    out.accounts = done.accounts; out.totals = done.totals; out.itemCount = totalRows;
-    res.json(out);
-  });
-  return router;
+    router.get('/api/ageing-ap', function (req, res) { return handleAgeing(req, res, AP_SOURCES); });
+    router.get('/api/ageing-ar', function (req, res) { return handleAgeing(req, res, AR_SOURCES); });
+      return router;
 };
