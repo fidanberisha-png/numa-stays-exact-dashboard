@@ -1,5 +1,5 @@
 // A/P Ageing dashboard for Numa Stays - live data from Exact Online (/api/ageing-ap)
-var S = { data: null, sort: 'total', dir: -1, q: '', bucket: 'all', open: {} };
+var S = { data: null, sort: 'total', dir: -1, q: '', bucket: 'all', open: {}, division: 'consolidated', dashboard: 'ap' };
 var COLS = [
   ['code', 'Code', 0],
   ['name', 'Name', 0],
@@ -38,7 +38,8 @@ function shell() {
   document.body.innerHTML = [
     '<header>',
     '<div class="brand">Numa Stays</div>',
-    '<div class="company">300 - Numa Norge AS</div>',
+    '<select class="company" id="company" title="Entity"><option value="consolidated">Consolidated (all entities)</option><option value="300">300 - Numa Norge AS</option></select>',
+    '<select class="company" id="dashboard" title="Dashboards"><option value="ap">Dashboards: AP Ageing</option><option value="ar">Dashboards: AR Ageing</option></select>',
     '<span class="pill" id="conn">Checking connection</span>',
     '<div class="spacer"></div>',
     '<button class="btn sec" id="refresh">Refresh</button>',
@@ -61,12 +62,15 @@ function shell() {
   el('referto').onchange = function () { load(); };
   el('bucket').onchange = function () { S.bucket = el('bucket').value; draw(); };
   el('q').oninput = function () { S.q = el('q').value; draw(); };
+  el('company').onchange = function () { S.division = el('company').value; load(); };
+  el('dashboard').onchange = function () { onDashboardChange(el('dashboard').value); };
 }
 function load() {
   var box = el('table');
   box.className = 'state';
   box.textContent = 'Loading live data from Exact Online...';
-  var url = '/api/ageing-ap?referTo=' + encodeURIComponent(el('referto').value) + '&date=' + encodeURIComponent(el('refdate').value);
+  var div = (S.division || (el('company') ? el('company').value : '') || 'consolidated');
+  var url = '/api/ageing-ap?referTo=' + encodeURIComponent(el('referto').value) + '&date=' + encodeURIComponent(el('refdate').value) + '&division=' + encodeURIComponent(div);
   fetch(url, { credentials: 'same-origin' }).then(function (r) {
     return r.json().then(function (j) { return { ok: r.ok, j: j }; });
   }).then(function (res) {
@@ -225,7 +229,44 @@ function conn() {
     }
   }).catch(function () {});
 }
+// Populate the entity dropdown from Exact Online (all entities the token can access).
+function loadDivisions() {
+  fetch('/api/divisions', { credentials: 'same-origin' }).then(function (r) { return r.json(); }).then(function (j) {
+    var sel = el('company');
+    if (!sel || !j || !j.divisions) { return; }
+    var cur = j.current ? String(j.current) : null;
+    var html = '<option value="consolidated">Consolidated (all entities)</option>';
+    for (var i = 0; i < j.divisions.length; i++) {
+      var d = j.divisions[i];
+      html += '<option value="' + esc(d.code) + '">' + esc(d.label) + '</option>';
+    }
+    sel.innerHTML = html;
+    var def = 'consolidated';
+    for (var k = 0; k < j.divisions.length; k++) {
+      var code = String(j.divisions[k].code);
+      var name = String(j.divisions[k].name || '');
+      if ((cur && code === cur) || /Numa Norge/i.test(name)) { def = code; break; }
+    }
+    sel.value = def;
+    S.division = sel.value;
+    load();
+  }).catch(function () {});
+}
+function onDashboardChange(v) {
+  S.dashboard = v;
+  var h1 = document.querySelector('h1');
+  if (v === 'ar') {
+    if (h1) { h1.textContent = 'Ageing analysis: A/R'; }
+    var box = el('table');
+    if (box) { box.className = 'state'; box.innerHTML = 'A/R Ageing is coming soon. Switch back to <b>AP Ageing</b> to view payables.'; }
+    el('kpis').innerHTML = '';
+  } else {
+    if (h1) { h1.textContent = 'Ageing analysis: A/P'; }
+    load();
+  }
+}
+
 shell();
 conn();
-load();
+loadDivisions();
 setInterval(function () { conn(); load(); }, 300000);
