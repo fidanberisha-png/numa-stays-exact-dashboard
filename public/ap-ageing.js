@@ -260,7 +260,7 @@ setInterval(function () { conn(); load(); }, 300000);
 (function () {
   if (window.__numaPatch) return;
   window.__numaPatch = 1;
-  var NF = window.fetch, AMT = 'all', LAST = null, SIG = '', FIRST = true;
+  var NF = window.fetch, AMT = 'all', LAST = null, SIG = '', FIRST = true, VIEW = 'details', ACTIVE_ENT = null, SAVED_DETAILS_DIV = null;
   var ENT = [
     ['HQ', 1000, 3784237, 'Numa Group SE'],
     ['DACH', 900, 3745758, 'Numa Deutschland GmbH'],
@@ -361,7 +361,9 @@ setInterval(function () { conn(); load(); }, 300000);
     if (sel.value !== cur && sel.onchange) sel.onchange();
   }
   function ui() {
-    fillSelect();
+ensureTabs();
+if (VIEW === 'summary') { renderSummary(); return; }
+fillSelect();
     var tb = document.querySelector('table');
     if (!tb) return;
     var bs = document.getElementById('bucket');
@@ -439,6 +441,172 @@ setInterval(function () { conn(); load(); }, 300000);
     if (sig !== SIG) { SIG = sig; ui(); }
   }, 700);
   fillSelect();
+ensureTabs();
+layout();
+
+function ensureTabs() {
+if (document.getElementById('numaTabs')) { paintTabs(); return; }
+var header = document.querySelector('header');
+if (!header || !header.parentNode) return;
+var bar = document.createElement('div');
+bar.id = 'numaTabs';
+bar.style.cssText = 'display:flex;gap:8px;padding:14px 24px 0;';
+function mk(id, label) {
+var b = document.createElement('button');
+b.id = id;
+b.type = 'button';
+b.textContent = label;
+return b;
+}
+var bSum = mk('tabSummary', 'Summary');
+var bDet = mk('tabDetails', 'Details');
+bSum.onclick = function () { setView('summary'); };
+bDet.onclick = function () { setView('details'); };
+bar.appendChild(bSum);
+bar.appendChild(bDet);
+header.parentNode.insertBefore(bar, header.nextSibling);
+paintTabs();
+}
+function paintTabs() {
+var bSum = document.getElementById('tabSummary'), bDet = document.getElementById('tabDetails');
+if (!bSum || !bDet) return;
+var on = 'background:#00bfff;border:1px solid #00bfff;color:#04121b;padding:8px 16px;border-radius:8px;font-weight:700;font-size:13px;cursor:pointer;';
+var off = 'background:transparent;border:1px solid #232c38;color:#8b98a5;padding:8px 16px;border-radius:8px;font-weight:700;font-size:13px;cursor:pointer;';
+bSum.style.cssText = VIEW === 'summary' ? on : off;
+bDet.style.cssText = VIEW === 'details' ? on : off;
+}
+function setView(v) {
+if (VIEW === v) return;
+VIEW = v;
+var sel = document.getElementById('company');
+if (v === 'summary') {
+if (sel) { SAVED_DETAILS_DIV = sel.value; sel.value = 'selected'; sel.disabled = true; }
+S.division = 'selected';
+ACTIVE_ENT = null;
+} else {
+if (sel) { sel.disabled = false; sel.value = SAVED_DETAILS_DIV || sel.value; }
+if (sel) { S.division = sel.value; }
+}
+paintTabs();
+layout();
+load();
+}
+function layout() {
+var controls = document.querySelector('.controls');
+var wrap = document.querySelector('.wrap');
+var summaryWrap = document.getElementById('summaryWrap');
+if (!summaryWrap && wrap && wrap.parentNode) {
+summaryWrap = document.createElement('div');
+summaryWrap.id = 'summaryWrap';
+summaryWrap.className = 'wrap';
+wrap.parentNode.insertBefore(summaryWrap, wrap.nextSibling);
+}
+if (VIEW === 'summary') {
+if (controls) controls.style.display = 'none';
+if (wrap) wrap.style.display = 'none';
+if (summaryWrap) summaryWrap.style.display = '';
+} else {
+if (controls) controls.style.display = '';
+if (wrap) wrap.style.display = '';
+if (summaryWrap) summaryWrap.style.display = 'none';
+}
+}
+function entityAccounts(human) {
+var acc = (LAST && LAST.accounts) ? LAST.accounts : [];
+return acc.filter(function (a) { return a.entity === human; });
+}
+function vendorLabel(name, human) {
+var tag = ' [' + human + ']';
+var s = name || '';
+var i = s.lastIndexOf(tag);
+return i > -1 ? s.slice(0, i) : s;
+}
+function renderSummary() {
+ensureTabs();
+layout();
+var box = document.getElementById('summaryWrap');
+if (!box) return;
+var acc = (LAST && LAST.accounts) ? LAST.accounts : [];
+if (!acc.length) { box.innerHTML = '<div class="state">Loading live data from Exact Online...</div>'; return; }
+var isAP = (document.getElementById('dashboard') || {}).value !== 'ar';
+var who = isAP ? 'Suppliers' : 'Customers';
+var rows = ENT.map(function (m) {
+var list = entityAccounts(m[1]);
+var t = totalsOf(list);
+return { human: m[1], region: m[0], name: m[3], count: list.length, t: t, list: list };
+});
+var grand = totalsOf(acc);
+var h = '<table><thead><tr>';
+h += '<th class="txt">Entity</th><th class="num">' + who + '</th>';
+h += '<th class="num">0 - 30</th><th class="num">31 - 60</th><th class="num">61 - 90</th><th class="num">&gt; 90</th><th class="num">Outstanding</th><th class="num">Average</th>';
+h += '</tr></thead><tbody>';
+rows.forEach(function (r) {
+var risk = Math.abs(r.t.b4 || 0) > 0.004 ? ' risk' : '';
+var activeStyle = (ACTIVE_ENT === r.human) ? ' style="background:#19212c;box-shadow:inset 3px 0 0 #00bfff;"' : '';
+h += '<tr class="row' + risk + '" data-ent="' + esc(r.human) + '"' + activeStyle + '>';
+h += '<td>' + esc(r.human) + ' - ' + esc(r.name) + '</td><td class="num">' + r.count + '</td>';
+h += money(r.t.b1) + money(r.t.b2, 'warn') + money(r.t.b3, 'hot') + money(r.t.b4, 'bad') + money(r.t.total, 'strong');
+h += '<td class="num">' + (r.t.average || 0) + '</td></tr>';
+if (ACTIVE_ENT === r.human) {
+h += '<tr class="detail"><td colspan="8"><table class="inner"><thead><tr>';
+h += '<th>' + (isAP ? 'Vendor' : 'Customer') + '</th><th class="num">0 - 30</th><th class="num">31 - 60</th><th class="num">61 - 90</th><th class="num">&gt; 90</th><th class="num">Outstanding</th><th class="num">Average</th></tr></thead><tbody>';
+if (!r.list.length) {
+h += '<tr><td colspan="7" class="state">No open items for this entity.</td></tr>';
+}
+r.list.forEach(function (a) {
+h += '<tr><td>' + esc(vendorLabel(a.name, r.human)) + '</td>';
+h += money(a.b1) + money(a.b2, 'warn') + money(a.b3, 'hot') + money(a.b4, 'bad') + money(a.total, 'strong');
+h += '<td class="num">' + (a.average === null || a.average === undefined ? '' : a.average) + '</td></tr>';
+});
+h += '</tbody></table></td></tr>';
+}
+});
+h += '</tbody><tfoot><tr><td>TOTAL</td><td>' + rows.length + ' entities - ' + acc.length + ' ' + who.toLowerCase() + '</td>';
+h += money(grand.b1) + money(grand.b2) + money(grand.b3) + money(grand.b4) + money(grand.total);
+h += '<td class="num">' + grand.average + '</td></tr></tfoot></table>';
+box.innerHTML = h;
+var trs = box.querySelectorAll('tr.row');
+for (var i = 0; i < trs.length; i++) {
+trs[i].onclick = function () {
+var ent = this.getAttribute('data-ent');
+ACTIVE_ENT = (ACTIVE_ENT === ent) ? null : ent;
+renderSummary();
+};
+}
+renderSummaryKpis();
+}
+function renderSummaryKpis() {
+var acc = (LAST && LAST.accounts) ? LAST.accounts : [];
+var list = ACTIVE_ENT ? entityAccounts(ACTIVE_ENT) : acc;
+var t = totalsOf(list);
+kpis(list, t);
+var isAP = (document.getElementById('dashboard') || {}).value !== 'ar';
+var who = isAP ? 'suppliers' : 'customers';
+var cards = document.querySelectorAll('#kpis .kpi');
+var keys = ['b1', 'b2', 'b3', 'b4'];
+for (var i = 0; i < cards.length; i++) {
+var bar = cards[i].querySelector('.bar');
+if (bar) bar.remove();
+var sub = cards[i].querySelector('.s');
+var lab = cards[i].querySelector('.t');
+if (i === 0) {
+var entLabel;
+if (ACTIVE_ENT) {
+var m = null;
+for (var k = 0; k < ENT.length; k++) { if (ENT[k][1] === ACTIVE_ENT) { m = ENT[k]; break; } }
+entLabel = m ? (m[1] + ' - ' + m[3]) : String(ACTIVE_ENT);
+} else {
+entLabel = ENT.length + ' entities';
+}
+if (sub) sub.textContent = entLabel + ' \u00b7 ' + list.length + ' ' + who;
+} else {
+if (lab && lab.textContent.indexOf('OVER 90') > -1) lab.textContent = '> 90 DAYS';
+var key = keys[i - 1];
+var cnt = list.filter(function (a) { return Math.abs(Number(a[key]) || 0) > 0.004; }).length;
+if (sub) sub.textContent = cnt + ' ' + who + ' in this bucket';
+}
+}
+}
 })();
 
 if (typeof loadDivisions === 'function') { setTimeout(function () { try { loadDivisions(); } catch (e) { } }, 0); }
