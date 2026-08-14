@@ -260,7 +260,7 @@ setInterval(function () { conn(); load(); }, 300000);
 (function () {
   if (window.__numaPatch) return;
   window.__numaPatch = 1;
-  var NF = window.fetch, AMT = 'all', LAST = null, SIG = '';
+  var NF = window.fetch, AMT = 'all', LAST = null, SIG = '', FIRST = true;
   var ENT = [
     ['HQ', 1000, 3784237, 'Numa Group SE'],
     ['DACH', 900, 3745758, 'Numa Deutschland GmbH'],
@@ -356,7 +356,7 @@ setInterval(function () { conn(); load(); }, 300000);
       sel.appendChild(g);
     });
     sel.dataset.numa = '1';
-    var keep = [].slice.call(sel.options).some(function (o) { return o.value === cur; });
+    var keep = !FIRST && [].slice.call(sel.options).some(function (o) { return o.value === cur; }); FIRST = false;
     sel.value = keep ? cur : 'selected';
     if (!keep && sel.onchange) sel.onchange();
   }
