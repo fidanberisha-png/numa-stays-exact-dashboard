@@ -39,7 +39,7 @@ function shell() {
     '<header>',
     '<div class="brand">Numa Stays</div>',
     '<select class="company" id="company" title="Entity"><option value="consolidated">Consolidated (all entities)</option><option value="300">300 - Numa Norge AS</option></select>',
-    '<select class="company" id="dashboard" title="Dashboards"><option value="ap">Dashboards: AP Ageing</option><option value="ar">Dashboards: AR Ageing</option></select>',
+    '<select class="company" id="dashboard" title="Dashboards"><option value="ap">Dashboards: AP Ageing</option><option value="ar">Dashboards: AR Ageing</option><option value="ic">Dashboards: InterCompany</option></select>',
     '<span class="pill" id="conn">Checking connection</span>',
     '<div class="spacer"></div>',
     '<button class="btn sec" id="refresh">Refresh</button>',
@@ -247,7 +247,13 @@ function loadDivisions() {
 function onDashboardChange(v) {
   S.dashboard = v;
   var h1 = document.querySelector('h1');
+  if (v === 'ic') {
+    if (h1) { h1.textContent = 'InterCompany report'; }
+    if (window.__numaShowIC) { window.__numaShowIC(); }
+    return;
+  }
   if (h1) { h1.textContent = (v === 'ar') ? 'Ageing analysis: A/R' : 'Ageing analysis: A/P'; }
+  if (window.__numaHideIC) { window.__numaHideIC(); }
   load();
 }
 
@@ -613,6 +619,133 @@ var cnt = list.filter(function (a) { return Math.abs(Number(a[key]) || 0) > 0.00
 if (sub) sub.textContent = cnt + ' ' + who + ' in this bucket';
 }
 }
+}
+function icNorm(s) {
+  return String(s || '').toLowerCase()
+    .replace(/[.,()]/g, ' ')
+    .replace(/\b(gmbh|ag|srl|s\.r\.o|sro|sas|s\.a\.s|sl|s\.l|bv|b\.v|ltd|limited|aps|lda|unipessoal|inc|corp|se|spa|s\.r\.l)\b/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+function icTokens(s) {
+  return icNorm(s).split(' ').filter(function (w) { return w.length > 2; });
+}
+function icMatch(description, selfHuman) {
+  var dTokens = icTokens(description);
+  if (!dTokens.length) return null;
+  var best = null, bestScore = 0;
+  for (var i = 0; i < ENT.length; i++) {
+    var e = ENT[i];
+    if (e[1] === selfHuman) continue;
+    var eTokens = icTokens(e[3]);
+    var score = 0;
+    for (var j = 0; j < eTokens.length; j++) { if (dTokens.indexOf(eTokens[j]) > -1) score++; }
+    if (score > bestScore) { bestScore = score; best = e; }
+  }
+  return bestScore > 0 ? best : null;
+}
+function ensureIC() {
+  if (document.getElementById('icWrap')) return;
+  var wrap = document.querySelector('.wrap');
+  if (!wrap || !wrap.parentNode) return;
+  var box = document.createElement('div');
+  box.id = 'icWrap';
+  box.style.cssText = 'display:none;padding:0 24px 24px;';
+  box.innerHTML = '<div style="display:flex;align-items:center;gap:12px;margin:10px 0;">' +
+    '<button id="icRun" type="button" style="background:#00bfff;border:1px solid #00bfff;color:#04121b;padding:10px 18px;border-radius:8px;font-weight:700;font-size:13px;cursor:pointer;">Run report</button>' +
+    '<span id="icStatus" style="color:#8b98a5;font-size:13px;"></span>' +
+    '</div>' +
+    '<div id="icResults"></div>';
+  wrap.parentNode.insertBefore(box, wrap.nextSibling);
+  document.getElementById('icRun').onclick = function () { runIC(); };
+}
+function showIC() {
+  ensureTabs();
+  var tabs = document.getElementById('numaTabs'); if (tabs) tabs.style.display = 'none';
+  var controls = document.querySelector('.controls'); if (controls) controls.style.display = 'none';
+  var kpisEl = document.getElementById('kpis'); if (kpisEl) kpisEl.style.display = 'none';
+  var wrap = document.querySelector('.wrap'); if (wrap) wrap.style.display = 'none';
+  var summaryWrap = document.getElementById('summaryWrap'); if (summaryWrap) summaryWrap.style.display = 'none';
+  var sel = document.getElementById('company'); if (sel) sel.disabled = true;
+  var asof = document.getElementById('asof'); if (asof) asof.style.display = 'none';
+  ensureIC();
+  document.getElementById('icWrap').style.display = '';
+}
+function hideIC() {
+  var icWrap = document.getElementById('icWrap'); if (icWrap) icWrap.style.display = 'none';
+  var tabs = document.getElementById('numaTabs'); if (tabs) tabs.style.display = '';
+  var asof = document.getElementById('asof'); if (asof) asof.style.display = '';
+  var sel = document.getElementById('company'); if (sel) sel.disabled = (VIEW === 'summary');
+  layout();
+}
+window.__numaShowIC = showIC;
+window.__numaHideIC = hideIC;
+async function icFetchOne(m) {
+  try {
+    var r = await NF.call(window, '/api/gl-balance?division=' + m[2] + '&balanceType=B', { credentials: 'same-origin' });
+    var j = await r.json();
+    if (!r.ok || (j && j.error)) return { m: m, error: (j && j.error) || 'error', accounts: [] };
+    return { m: m, accounts: (j && j.accounts) || [] };
+  } catch (e) { return { m: m, error: String(e), accounts: [] }; }
+}
+async function runIC() {
+  var btn = document.getElementById('icRun');
+  var status = document.getElementById('icStatus');
+  if (btn) btn.disabled = true;
+  var matrix = {};
+  var unmatchedAll = [];
+  var errors = [];
+  for (var i = 0; i < ENT.length; i++) {
+    var m = ENT[i];
+    if (status) status.textContent = 'Duke lexuar ' + m[1] + ' - ' + m[3] + ' (' + (i + 1) + '/' + ENT.length + ')...';
+    var res = await icFetchOne(m);
+    if (res.error) { errors.push(m[1] + ': ' + res.error); continue; }
+    matrix[m[1]] = matrix[m[1]] || {};
+    (function (m, accounts) {
+      accounts.forEach(function (a) {
+        var target = icMatch(a.description, m[1]);
+        if (target) {
+          matrix[m[1]][target[1]] = (matrix[m[1]][target[1]] || 0) + a.amount;
+        } else {
+          unmatchedAll.push({ source: m[1] + ' - ' + m[3], glCode: a.code, glDescription: a.description, amount: a.amount });
+        }
+      });
+    })(m, res.accounts);
+    await nap(150);
+  }
+  if (btn) btn.disabled = false;
+  if (status) status.textContent = 'U p\u00ebrfundua.' + (errors.length ? (' ' + errors.length + ' gabime.') : '');
+  renderICTable(matrix, unmatchedAll, errors);
+}
+function renderICTable(matrix, unmatched, errors) {
+  var out = document.getElementById('icResults');
+  if (!out) return;
+  var h = '<table><thead><tr><th class="txt">Lender / Borrower</th>';
+  ENT.forEach(function (e) { h += '<th class="num">' + esc(e[3]) + '</th>'; });
+  h += '</tr></thead><tbody>';
+  ENT.forEach(function (row) {
+    h += '<tr><td>' + esc(row[1]) + ' - ' + esc(row[3]) + '</td>';
+    ENT.forEach(function (col) {
+      if (col[1] === row[1]) { h += '<td class="num">-</td>'; return; }
+      var v = matrix[row[1]] ? matrix[row[1]][col[1]] : undefined;
+      if (v === undefined) { h += '<td class="num">-</td>'; }
+      else { h += money(v); }
+    });
+    h += '</tr>';
+  });
+  h += '</tbody></table>';
+  if (errors && errors.length) {
+    h += '<div class="note" style="margin-top:10px;color:#ffb454;">Gabime: ' + esc(errors.join(' | ')) + '</div>';
+  }
+  if (unmatched && unmatched.length) {
+    h += '<div style="margin-top:16px;"><div style="color:#8b98a5;font-size:13px;margin-bottom:6px;">Llogari q\u00eb nuk u p\u00ebrputhen automatikisht me nj\u00ebrin nga 19 entitetet (' + unmatched.length + '):</div>';
+    h += '<table class="inner"><thead><tr><th>Entiteti burim</th><th>Kodi</th><th>P\u00ebrshkrimi</th><th class="num">Shuma</th></tr></thead><tbody>';
+    unmatched.forEach(function (u) {
+      h += '<tr><td>' + esc(u.source) + '</td><td class="mono">' + esc(u.glCode) + '</td><td>' + esc(u.glDescription) + '</td>' + money(u.amount) + '</tr>';
+    });
+    h += '</tbody></table></div>';
+  }
+  out.innerHTML = h;
 }
 })();
 
