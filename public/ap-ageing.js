@@ -341,14 +341,14 @@ setInterval(function () { conn(); load(); }, 300000);
     }
     return p;
   };
-  function fillSelect() {
+  var ICENT = ENT.concat([['SOUTH', 711, 4166557, 'numa Lisbon South, unipessoal Lda']]); function fillSelect() {
     var sel = document.getElementById('company');
     if (!sel || (sel.querySelector('option[value="selected"]') && sel.options.length === ENT.length + 1)) return;
     var cur = sel.value;
     sel.innerHTML = '';
     var first = document.createElement('option');
     first.value = 'selected';
-    first.text = 'Consolidated (' + ENT.length + ' selected entities)';
+    var __ds = document.getElementById('dashboard'); first.text = 'Consolidated (' + ((__ds && __ds.value === 'ic') ? ICENT.length : ENT.length) + ' selected entities)';
     sel.appendChild(first);
     ['HQ', 'DACH', 'WEST', 'SOUTH'].forEach(function (reg) {
       var g = document.createElement('optgroup');
@@ -632,7 +632,7 @@ function icTokens(s) {
 }
 function icMatch(description, selfHuman) {
   var dTokens = icTokens(description);
-  if (!dTokens.length) return null;
+  if (!dTokens.length) return null; var ENT = ICENT;
   var best = null, bestScore = 0;
   for (var i = 0; i < ENT.length; i++) {
     var e = ENT[i];
@@ -666,7 +666,7 @@ function showIC() {
   var kpisEl = document.getElementById('kpis'); if (kpisEl) kpisEl.style.display = 'none';
   var wrap = document.querySelector('.wrap'); if (wrap) wrap.style.display = 'none';
   var summaryWrap = document.getElementById('summaryWrap'); if (summaryWrap) summaryWrap.style.display = 'none';
-  var sel = document.getElementById('company'); if (sel) sel.disabled = true;
+  var sel = document.getElementById('company'); if (sel) sel.disabled = true; if (sel && sel.options[0] && sel.options[0].value === 'selected') sel.options[0].text = 'Consolidated (' + ICENT.length + ' selected entities)';
   var asof = document.getElementById('asof'); if (asof) asof.style.display = 'none';
   ensureIC();
   document.getElementById('icWrap').style.display = '';
@@ -675,7 +675,7 @@ function hideIC() {
   var icWrap = document.getElementById('icWrap'); if (icWrap) icWrap.style.display = 'none';
   var tabs = document.getElementById('numaTabs'); if (tabs) tabs.style.display = '';
   var asof = document.getElementById('asof'); if (asof) asof.style.display = '';
-  var sel = document.getElementById('company'); if (sel) sel.disabled = (VIEW === 'summary');
+  var sel = document.getElementById('company'); if (sel) sel.disabled = (VIEW === 'summary'); if (sel && sel.options[0] && sel.options[0].value === 'selected') sel.options[0].text = 'Consolidated (' + ENT.length + ' selected entities)';
   layout();
 }
 window.__numaShowIC = showIC;
@@ -695,7 +695,7 @@ function icInRange(code) {
   var IC_GROUP_ORDER = ['HQ', 'DACH', 'WEST', 'SOUTH'];
   function icGroups() {
       return IC_GROUP_ORDER.map(function (g) {
-            return { name: g, members: ENT.filter(function (e) { return e[0] === g; }) };
+            return { name: g, members: ICENT.filter(function (e) { return e[0] === g; }) };
       });
   }
   function icRowPlan() {
@@ -709,7 +709,7 @@ function icInRange(code) {
       return plan;
   }
   async function runIC() {
-      var btn = document.getElementById('icRun');
+      var btn = document.getElementById('icRun'); var ENT = ICENT;
       var status = document.getElementById('icStatus');
       if (btn) btn.disabled = true;
       var matrix = {};
