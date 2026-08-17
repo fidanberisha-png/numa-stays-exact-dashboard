@@ -366,7 +366,7 @@ setInterval(function () { conn(); load(); }, 300000);
     sel.value = keep ? want : 'selected'; if (!sel.__numaLs) { sel.__numaLs = 1; sel.addEventListener('change', function () { try { sessionStorage.setItem('numaDiv', sel.value); } catch (e) { } }); }
     if (sel.value !== cur && sel.onchange) sel.onchange();
   }
-  function ui() {
+  function ui() { numaStyle();
 ensureTabs();
 if (VIEW === 'summary') { renderSummary(); return; }
 fillSelect();
@@ -644,7 +644,7 @@ function icMatch(description, selfHuman) {
   }
   return bestScore > 0 ? best : null;
 }
-function ensureIC() {
+function numaStyle() { if (document.getElementById('numaICStyle')) return; var st0 = document.createElement('style'); st0.id = 'numaICStyle'; st0.textContent = '.brand{font-size:16px}.company{font-size:13px}.pill{font-size:11px}.btn{font-size:12px}h1{font-size:19px}.sub{font-size:12px}.ctl label{font-size:10px}input,.controls select{font-size:12px}.kpi .t{font-size:10px}.kpi .v{font-size:20px}.kpi .s{font-size:11px}table{font-size:12px}thead th{font-size:10px}.note{font-size:11px}#icWrap{overflow:auto;max-height:calc(100vh - 120px)}#icResults table{font-size:11px;border-collapse:separate;border-spacing:0}#icResults th,#icResults td{padding:4px 8px;white-space:nowrap}#icResults thead th{position:sticky;top:0;z-index:3;background:#131a24}#icResults thead th:first-child{left:0;z-index:5}#icResults tbody td:first-child{position:sticky;left:0;z-index:2;background:#0f151d}'; document.head.appendChild(st0); } function ensureIC() { numaStyle();
   if (document.getElementById('icWrap')) return;
   var wrap = document.querySelector('.wrap');
   if (!wrap || !wrap.parentNode) return;
@@ -680,7 +680,7 @@ function hideIC() {
 }
 window.__numaShowIC = showIC;
 window.__numaHideIC = hideIC;
-async function icFetchOne(m) {
+async function icFetchOne(m) { for (var __t = 0; __t < 3; __t++) { var __r = await icFetchOnce(m); if (!__r.error) return __r; await nap(1500); } return await icFetchOnce(m); } async function icFetchOnce(m) {
       try {
               var r = await NF.call(window, '/api/gl-balance?division=' + m[2] + '&balanceType=B&codeFrom=140000&codeTo=149999', { credentials: 'same-origin' });
               var j = await r.json();
@@ -713,7 +713,7 @@ function icInRange(code) {
       var status = document.getElementById('icStatus');
       if (btn) btn.disabled = true;
       var matrix = {};
-      var unmatchedAll = [];
+      var unmatchedAll = []; var other = {}; var oNotes = {};
       var errors = [];
       for (var i = 0; i < ENT.length; i++) {
             var m = ENT[i];
@@ -728,7 +728,7 @@ function icInRange(code) {
                               if (target) {
                                           matrix[m[1]][target[1]] = (matrix[m[1]][target[1]] || 0) + a.amount;
                               } else {
-                                          unmatchedAll.push({ source: m[1] + ' - ' + m[3], glCode: a.code, glDescription: a.description, amount: a.amount });
+                                          unmatchedAll.push({ source: m[1] + ' - ' + m[3], glCode: a.code, glDescription: a.description, amount: a.amount }); var __b = icBucket(a.code); other[m[1]] = other[m[1]] || {}; other[m[1]][__b] = (other[m[1]][__b] || 0) + a.amount; oNotes[m[1]] = oNotes[m[1]] || {}; oNotes[m[1]][__b] = oNotes[m[1]][__b] || []; oNotes[m[1]][__b].push(a.code + ' ' + a.description);
                               }
                     });
             })(m, res.accounts);
@@ -736,7 +736,7 @@ function icInRange(code) {
       }
       if (btn) btn.disabled = false;
       if (status) status.textContent = 'Done.' + (errors.length ? (' ' + errors.length + ' errors.') : '');
-      renderICTable(matrix, unmatchedAll, errors);
+      renderICTable(matrix, unmatchedAll, errors, other, oNotes);
   }
   function icCellValue(rowMembers, colMembers, matrix) {
       var total = 0, any = false;
@@ -758,7 +758,7 @@ function icInRange(code) {
       var fw = bold ? 'font-weight:700;' : '';
       return '<td class="num" style="color:' + color + ';background:' + bg + ';' + fw + '">' + fmt(n) + '</td>';
   }
-  function renderICTable(matrix, unmatched, errors) {
+  var IC_BUCKETS = [['ext', 'Trade AR external'], ['grp', 'Trade AR group'], ['oth', 'Other receivables'], ['ico', 'IC other (unnamed)'], ['loan', 'Loans / shareholder']]; function icBucket(code) { var n = parseInt(String(code || '').replace(/[^0-9]/g, ''), 10); if (isNaN(n)) return 'oth'; if (n >= 147000) return 'loan'; if (n >= 145000) return 'ico'; if (n >= 143000) return 'oth'; if (n >= 142000) return 'grp'; return 'ext'; } function icOtherVal(members, other, key) { var t = 0, any = false; members.forEach(function (m) { var o = other[m[1]]; if (o && o[key] !== undefined) { t += o[key]; any = true; } }); return any ? t : undefined; } function icRowTotal(members, matrix, other) { var t = 0, any = false; members.forEach(function (m) { var r = matrix[m[1]]; if (r) { Object.keys(r).forEach(function (k) { t += r[k]; any = true; }); } var o = other[m[1]]; if (o) { Object.keys(o).forEach(function (k) { t += o[k]; any = true; }); } }); return any ? t : undefined; } function renderICTable(matrix, unmatched, errors, other, oNotes) { other = other || {}; oNotes = oNotes || {};
       var out = document.getElementById('icResults');
       if (!out) return;
       var plan = icRowPlan();
@@ -768,10 +768,10 @@ function icInRange(code) {
             else if (p.type === 'subtotal') { h += '<th class="num" style="font-weight:700;">' + esc(p.name) + '</th>'; }
             else { h += '<th class="num"></th>'; }
       });
-      h += '</tr></thead><tbody>';
+      IC_BUCKETS.forEach(function (b) { h += '<th class="num" style="color:#9fb0c0;">' + esc(b[1]) + '</th>'; }); h += '<th class="num" style="font-weight:700;">TOTAL</th>'; h += '</tr></thead><tbody>';
       plan.forEach(function (rowP) {
             if (rowP.type === 'blank') {
-                    h += '<tr><td colspan="' + (plan.length + 1) + '">&nbsp;</td></tr>';
+                    h += '<tr><td colspan="' + (plan.length + 2 + IC_BUCKETS.length) + '">&nbsp;</td></tr>';
                     return;
             }
             if (rowP.type === 'entity') {
@@ -791,13 +791,13 @@ function icInRange(code) {
                     var v = icCellValue(rowMembers, colMembers, matrix);
                     h += icCell(v, bold);
             });
-            h += '</tr>';
+            var __rm = rowP.type === 'entity' ? [rowP.e] : rowP.members; var __bd = rowP.type === 'subtotal'; IC_BUCKETS.forEach(function (b) { var v = icOtherVal(__rm, other, b[0]); var cc = icCell(v, __bd); if (rowP.type === 'entity' && oNotes[rowP.e[1]] && oNotes[rowP.e[1]][b[0]]) { cc = cc.replace('<td ', '<td title="' + esc(oNotes[rowP.e[1]][b[0]].join(' | ')) + '" '); } h += cc; }); h += icCell(icRowTotal(__rm, matrix, other), true); h += '</tr>';
       });
       h += '</tbody></table>';
       if (errors && errors.length) {
             h += '<div class="note" style="margin-top:10px;color:#ffb454;">Errors: ' + esc(errors.join(' | ')) + '</div>';
       }
-      if (unmatched && unmatched.length) {
+      if (false && unmatched && unmatched.length) {
             h += '<div style="margin-top:16px;"><div style="color:#8b98a5;font-size:13px;margin-bottom:6px;">Accounts that did not automatically match one of the ' + ICENT.length + ' entities (' + unmatched.length + '):</div>';
             h += '<table class="inner"><thead><tr><th>Source entity</th><th>Code</th><th>Description</th><th class="num">Amount</th></tr></thead><tbody>';
             unmatched.forEach(function (u) {
