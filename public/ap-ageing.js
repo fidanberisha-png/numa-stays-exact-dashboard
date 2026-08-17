@@ -681,12 +681,12 @@ function hideIC() {
 window.__numaShowIC = showIC;
 window.__numaHideIC = hideIC;
 async function icFetchOne(m) {
-  try {
-    var r = await NF.call(window, '/api/gl-balance?division=' + m[2] + '&balanceType=B', { credentials: 'same-origin' });
-    var j = await r.json();
-    if (!r.ok || (j && j.error)) return { m: m, error: (j && j.error) || 'error', accounts: [] };
-    return { m: m, accounts: (j && j.accounts) || [] };
-  } catch (e) { return { m: m, error: String(e), accounts: [] }; }
+      try {
+              var r = await NF.call(window, '/api/gl-balance?division=' + m[2] + '&balanceType=B&codeFrom=140000&codeTo=149999', { credentials: 'same-origin' });
+              var j = await r.json();
+              if (!r.ok || (j && j.error)) return { m: m, error: (j && j.error) || ('HTTP ' + r.status), accounts: [] };
+              return { m: m, accounts: (j && j.accounts) || [] };
+      } catch (e) { return { m: m, error: String(e), accounts: [] }; }
 }
 function icInRange(code) {
     var n = parseInt(String(code || '').replace(/[^0-9]/g, ''), 10);
