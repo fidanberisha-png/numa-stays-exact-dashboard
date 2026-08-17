@@ -798,7 +798,7 @@ function icInRange(code) {
             h += '<div class="note" style="margin-top:10px;color:#ffb454;">Errors: ' + esc(errors.join(' | ')) + '</div>';
       }
       if (unmatched && unmatched.length) {
-            h += '<div style="margin-top:16px;"><div style="color:#8b98a5;font-size:13px;margin-bottom:6px;">Accounts that did not automatically match one of the 19 entities (' + unmatched.length + '):</div>';
+            h += '<div style="margin-top:16px;"><div style="color:#8b98a5;font-size:13px;margin-bottom:6px;">Accounts that did not automatically match one of the ' + ICENT.length + ' entities (' + unmatched.length + '):</div>';
             h += '<table class="inner"><thead><tr><th>Source entity</th><th>Code</th><th>Description</th><th class="num">Amount</th></tr></thead><tbody>';
             unmatched.forEach(function (u) {
                     h += '<tr><td>' + esc(u.source) + '</td><td class="mono">' + esc(u.glCode) + '</td><td>' + esc(u.glDescription) + '</td>' + money(u.amount) + '</tr>';
