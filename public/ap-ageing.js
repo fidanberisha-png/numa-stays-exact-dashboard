@@ -688,65 +688,125 @@ async function icFetchOne(m) {
     return { m: m, accounts: (j && j.accounts) || [] };
   } catch (e) { return { m: m, error: String(e), accounts: [] }; }
 }
-async function runIC() {
-  var btn = document.getElementById('icRun');
-  var status = document.getElementById('icStatus');
-  if (btn) btn.disabled = true;
-  var matrix = {};
-  var unmatchedAll = [];
-  var errors = [];
-  for (var i = 0; i < ENT.length; i++) {
-    var m = ENT[i];
-    if (status) status.textContent = 'Duke lexuar ' + m[1] + ' - ' + m[3] + ' (' + (i + 1) + '/' + ENT.length + ')...';
-    var res = await icFetchOne(m);
-    if (res.error) { errors.push(m[1] + ': ' + res.error); continue; }
-    matrix[m[1]] = matrix[m[1]] || {};
-    (function (m, accounts) {
-      accounts.forEach(function (a) {
-        var target = icMatch(a.description, m[1]);
-        if (target) {
-          matrix[m[1]][target[1]] = (matrix[m[1]][target[1]] || 0) + a.amount;
-        } else {
-          unmatchedAll.push({ source: m[1] + ' - ' + m[3], glCode: a.code, glDescription: a.description, amount: a.amount });
-        }
+function icInRange(code) {
+    var n = parseInt(String(code || '').replace(/[^0-9]/g, ''), 10);
+    return !isNaN(n) && n >= 140000 && n < 150000;
+}
+  var IC_GROUP_ORDER = ['HQ', 'DACH', 'WEST', 'SOUTH'];
+  function icGroups() {
+      return IC_GROUP_ORDER.map(function (g) {
+            return { name: g, members: ENT.filter(function (e) { return e[0] === g; }) };
       });
-    })(m, res.accounts);
-    await nap(150);
   }
-  if (btn) btn.disabled = false;
-  if (status) status.textContent = 'U p\u00ebrfundua.' + (errors.length ? (' ' + errors.length + ' gabime.') : '');
-  renderICTable(matrix, unmatchedAll, errors);
-}
-function renderICTable(matrix, unmatched, errors) {
-  var out = document.getElementById('icResults');
-  if (!out) return;
-  var h = '<table><thead><tr><th class="txt">Lender / Borrower</th>';
-  ENT.forEach(function (e) { h += '<th class="num">' + esc(e[3]) + '</th>'; });
-  h += '</tr></thead><tbody>';
-  ENT.forEach(function (row) {
-    h += '<tr><td>' + esc(row[1]) + ' - ' + esc(row[3]) + '</td>';
-    ENT.forEach(function (col) {
-      if (col[1] === row[1]) { h += '<td class="num">-</td>'; return; }
-      var v = matrix[row[1]] ? matrix[row[1]][col[1]] : undefined;
-      if (v === undefined) { h += '<td class="num">-</td>'; }
-      else { h += money(v); }
-    });
-    h += '</tr>';
-  });
-  h += '</tbody></table>';
-  if (errors && errors.length) {
-    h += '<div class="note" style="margin-top:10px;color:#ffb454;">Gabime: ' + esc(errors.join(' | ')) + '</div>';
+  function icRowPlan() {
+      var groups = icGroups();
+      var plan = [];
+      groups.forEach(function (g, gi) {
+            g.members.forEach(function (e) { plan.push({ type: 'entity', e: e }); });
+            plan.push({ type: 'subtotal', name: g.name, members: g.members });
+            if (gi < groups.length - 1) plan.push({ type: 'blank' });
+      });
+      return plan;
   }
-  if (unmatched && unmatched.length) {
-    h += '<div style="margin-top:16px;"><div style="color:#8b98a5;font-size:13px;margin-bottom:6px;">Llogari q\u00eb nuk u p\u00ebrputhen automatikisht me nj\u00ebrin nga 19 entitetet (' + unmatched.length + '):</div>';
-    h += '<table class="inner"><thead><tr><th>Entiteti burim</th><th>Kodi</th><th>P\u00ebrshkrimi</th><th class="num">Shuma</th></tr></thead><tbody>';
-    unmatched.forEach(function (u) {
-      h += '<tr><td>' + esc(u.source) + '</td><td class="mono">' + esc(u.glCode) + '</td><td>' + esc(u.glDescription) + '</td>' + money(u.amount) + '</tr>';
-    });
-    h += '</tbody></table></div>';
+  async function runIC() {
+      var btn = document.getElementById('icRun');
+      var status = document.getElementById('icStatus');
+      if (btn) btn.disabled = true;
+      var matrix = {};
+      var unmatchedAll = [];
+      var errors = [];
+      for (var i = 0; i < ENT.length; i++) {
+            var m = ENT[i];
+            if (status) status.textContent = 'Reading ' + m[1] + ' - ' + m[3] + ' (' + (i + 1) + '/' + ENT.length + ')...';
+            var res = await icFetchOne(m);
+            if (res.error) { errors.push(m[1] + ': ' + res.error); continue; }
+            matrix[m[1]] = matrix[m[1]] || {};
+            (function (m, accounts) {
+                    accounts.forEach(function (a) {
+                              if (!icInRange(a.code)) return;
+                              var target = icMatch(a.description, m[1]);
+                              if (target) {
+                                          matrix[m[1]][target[1]] = (matrix[m[1]][target[1]] || 0) + a.amount;
+                              } else {
+                                          unmatchedAll.push({ source: m[1] + ' - ' + m[3], glCode: a.code, glDescription: a.description, amount: a.amount });
+                              }
+                    });
+            })(m, res.accounts);
+            await nap(150);
+      }
+      if (btn) btn.disabled = false;
+      if (status) status.textContent = 'Done.' + (errors.length ? (' ' + errors.length + ' errors.') : '');
+      renderICTable(matrix, unmatchedAll, errors);
   }
-  out.innerHTML = h;
-}
+  function icCellValue(rowMembers, colMembers, matrix) {
+      var total = 0, any = false;
+      rowMembers.forEach(function (r) {
+            colMembers.forEach(function (c) {
+                    if (r[1] === c[1]) return;
+                    var v = matrix[r[1]] ? matrix[r[1]][c[1]] : undefined;
+                    if (v !== undefined) { total += v; any = true; }
+            });
+      });
+      return any ? total : undefined;
+  }
+  function icCell(v, bold) {
+      if (v === undefined || v === null) return '<td class="num">-</td>';
+      var n = Number(v) || 0;
+      if (Math.abs(n) < 0.005) return '<td class="num">-</td>';
+      var color = n > 0 ? '#3ddc84' : '#ff8a5c';
+      var bg = n > 0 ? 'rgba(61,220,132,0.14)' : 'rgba(255,138,92,0.14)';
+      var fw = bold ? 'font-weight:700;' : '';
+      return '<td class="num" style="color:' + color + ';background:' + bg + ';' + fw + '">' + fmt(n) + '</td>';
+  }
+  function renderICTable(matrix, unmatched, errors) {
+      var out = document.getElementById('icResults');
+      if (!out) return;
+      var plan = icRowPlan();
+      var h = '<table><thead><tr><th class="txt">Lender / Borrower</th>';
+      plan.forEach(function (p) {
+            if (p.type === 'entity') { h += '<th class="num">' + esc(p.e[3]) + '</th>'; }
+            else if (p.type === 'subtotal') { h += '<th class="num" style="font-weight:700;">' + esc(p.name) + '</th>'; }
+            else { h += '<th class="num"></th>'; }
+      });
+      h += '</tr></thead><tbody>';
+      plan.forEach(function (rowP) {
+            if (rowP.type === 'blank') {
+                    h += '<tr><td colspan="' + (plan.length + 1) + '">&nbsp;</td></tr>';
+                    return;
+            }
+            if (rowP.type === 'entity') {
+                    h += '<tr><td>' + esc(rowP.e[1]) + ' - ' + esc(rowP.e[3]) + '</td>';
+            } else {
+                    h += '<tr><td style="font-weight:700;">' + esc(rowP.name) + '</td>';
+            }
+            plan.forEach(function (colP) {
+                    if (colP.type === 'blank') { h += '<td class="num"></td>'; return; }
+                    var rowMembers = rowP.type === 'entity' ? [rowP.e] : rowP.members;
+                    var colMembers = colP.type === 'entity' ? [colP.e] : colP.members;
+                    if (rowP.type === 'entity' && colP.type === 'entity' && rowP.e[1] === colP.e[1]) {
+                              h += '<td class="num">-</td>';
+                              return;
+                    }
+                    var bold = rowP.type === 'subtotal' || colP.type === 'subtotal';
+                    var v = icCellValue(rowMembers, colMembers, matrix);
+                    h += icCell(v, bold);
+            });
+            h += '</tr>';
+      });
+      h += '</tbody></table>';
+      if (errors && errors.length) {
+            h += '<div class="note" style="margin-top:10px;color:#ffb454;">Errors: ' + esc(errors.join(' | ')) + '</div>';
+      }
+      if (unmatched && unmatched.length) {
+            h += '<div style="margin-top:16px;"><div style="color:#8b98a5;font-size:13px;margin-bottom:6px;">Accounts that did not automatically match one of the 19 entities (' + unmatched.length + '):</div>';
+            h += '<table class="inner"><thead><tr><th>Source entity</th><th>Code</th><th>Description</th><th class="num">Amount</th></tr></thead><tbody>';
+            unmatched.forEach(function (u) {
+                    h += '<tr><td>' + esc(u.source) + '</td><td class="mono">' + esc(u.glCode) + '</td><td>' + esc(u.glDescription) + '</td>' + money(u.amount) + '</tr>';
+            });
+            h += '</tbody></table></div>';
+      }
+      out.innerHTML = h;
+  }
 })();
 
 if (typeof loadDivisions === 'function') { setTimeout(function () { try { loadDivisions(); } catch (e) { } }, 0); }
