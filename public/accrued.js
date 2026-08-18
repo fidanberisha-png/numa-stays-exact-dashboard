@@ -32,7 +32,7 @@
   ];
   var YEARS = [2026, 2025, 2024];
   var REGIONS = ['HQ', 'DACH', 'WEST', 'SOUTH'];
-  var S = { entity: 'consolidated', year: 2026, code: '272200', rows: [], open: {}, det: {}, busy: false, errors: [], q: '', done: 0, total: 0 };
+  var S = { entity: 'consolidated', year: 'all', code: '272200', rows: [], open: {}, det: {}, busy: false, errors: [], q: '', done: 0, total: 0 };
 
   function el(id) { return document.getElementById(id); }
   function esc(v) {
@@ -233,7 +233,7 @@
     });
   }
 
-  function keyOf(l) { return l.division + '-' + l.entryNumber + '-' + l.lineNumber; }
+  function keyOf(l) { return l.division + '-' + l.entryNumber; }
 
   function draw() {
     var rows = filtered();
@@ -266,14 +266,14 @@
     rows.forEach(function (l) {
       var key = keyOf(l);
       var isOpen = !!S.open[key];
-      h += '<tr class="row" data-k="' + esc(key) + '" data-e="' + esc(l.entryNumber) + '" data-d="' + esc(l.division) + '" data-y="' + esc(l.year) + '" data-i="' + esc(l.entryId || '') + '">';
+      h += '<tr class="row" data-k="' + esc(key) + '" data-e="' + esc(l.entryNumber) + '" data-d="' + esc(l.division) + '" data-y="' + esc(l.year) + '">';
       h += '<td class="caret">' + (isOpen ? '\u25be' : '\u25b8') + '</td>';
       if (cons) h += '<td>' + esc(l.entityCode + ' - ' + shortName(l.entityName)) + '</td>';
       h += '<td>' + fmtDate(l.date) + '</td>';
       h += '<td class="mono link">' + esc(l.entryNumber) + '</td>';
       h += '<td>' + esc(l.journalCode + (l.journalDescription ? ' - ' + l.journalDescription : '')) + '</td>';
-      h += '<td>' + esc(l.description) + '</td>';
-      h += '<td>' + esc(l.accountCode ? (l.accountCode + ' - ' + l.accountName) : l.accountName) + '</td>';
+      h += '<td class=\'desc\' title="' + esc(l.description) + '">' + esc(l.description) + '</td>';
+      h += '<td class=\'acct\' title="' + esc(l.accountName) + '">' + esc(l.accountCode ? (l.accountCode + ' - ' + l.accountName) : l.accountName) + '</td>';
       h += '<td class="num">' + (l.debit ? eur(l.debit) : '') + '</td>';
       h += '<td class="num">' + (l.credit ? eur(l.credit) : '') + '</td>';
       h += '</tr>';
@@ -288,7 +288,7 @@
     w.innerHTML = h;
     var trs = w.querySelectorAll('tr.row');
     for (var i = 0; i < trs.length; i++) {
-      trs[i].onclick = function () { toggle(this.getAttribute('data-k'), this.getAttribute('data-d'), this.getAttribute('data-e'), this.getAttribute('data-y'), this.getAttribute('data-i')); };
+      trs[i].onclick = function () { toggle(this.getAttribute('data-k'), this.getAttribute('data-d'), this.getAttribute('data-e'), this.getAttribute('data-y')); };
     }
     note();
   }
@@ -316,7 +316,7 @@
       h += '<td>' + esc(l.lineNumber) + '</td>';
       h += '<td>' + fmtDate(l.date) + '</td>';
       h += '<td>' + esc(l.glCode + (l.glDescription ? ' - ' + l.glDescription : '')) + '</td>';
-      h += '<td>' + esc(l.description) + '</td>';
+      h += '<td class=\'desc\' title="' + esc(l.description) + '">' + esc(l.description) + '</td>';
       h += '<td class="num">' + (l.debit ? eur(l.debit) : '') + '</td>';
       h += '<td class="num">' + (l.credit ? eur(l.credit) : '') + '</td>';
       h += '</tr>';
@@ -327,11 +327,11 @@
     return h;
   }
 
-  async function loadDetail(key, div, entry, year, entryId) {
+  async function loadDetail(key, div, entry, year) {
     if (S.det[key]) return;
     S.det[key] = null;
     try {
-      var url = '/api/accrued/entry?division=' + div + '&entry=' + encodeURIComponent(entry) + (year ? '&year=' + encodeURIComponent(year) : '') + (entryId ? '&entryId=' + encodeURIComponent(entryId) : '');
+      var url = '/api/accrued/entry?division=' + div + '&entry=' + encodeURIComponent(entry) + (year ? '&year=' + encodeURIComponent(year) : '');
       var r = await fetch(url, { credentials: 'same-origin' });
       var j = await r.json();
       if (!r.ok || (j && j.error)) {
@@ -345,11 +345,11 @@
     draw();
   }
 
-  function toggle(key, div, entry, year, entryId) {
+  function toggle(key, div, entry, year) {
     if (S.open[key]) { delete S.open[key]; draw(); return; }
     S.open[key] = 1;
     draw();
-    if (!S.det[key]) loadDetail(key, div, entry, year, entryId);
+    if (!S.det[key]) loadDetail(key, div, entry, year);
   }
 
   async function expandAll() {
@@ -359,7 +359,7 @@
       var key = keyOf(l);
       S.open[key] = 1;
       draw();
-      if (!S.det[key]) await loadDetail(key, l.division, l.entryNumber, l.year, l.entryId);
+      if (!S.det[key]) await loadDetail(key, l.division, l.entryNumber, l.year);
     }
   }
 
