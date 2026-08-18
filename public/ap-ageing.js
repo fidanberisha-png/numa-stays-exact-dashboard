@@ -39,7 +39,7 @@ function shell() {
     '<header>',
     '<div class="brand">Numa Stays</div>',
     '<select class="company" id="company" title="Entity"><option value="consolidated">Consolidated (all entities)</option><option value="300">300 - Numa Norge AS</option></select>',
-    '<select class="company" id="dashboard" title="Dashboards"><option value="ap">Dashboards: AP Ageing</option><option value="ar">Dashboards: AR Ageing</option><option value="ic">Dashboards: InterCompany</option></select>',
+    '<select class="company" id="dashboard" title="Dashboards"><option value="ap">Dashboards: AP Ageing</option><option value="ar">Dashboards: AR Ageing</option><option value="ic">Dashboards: InterCompany</option><option value=\"accrued\">Dashboards: Accrued</option></select>',
     '<span class="pill" id="conn">Checking connection</span>',
     '<div class="spacer"></div>',
     '<button class="btn sec" id="refresh">Refresh</button>',
@@ -245,6 +245,7 @@ function loadDivisions() {
   }).catch(function () {});
 }
 function onDashboardChange(v) {
+  if (v === 'accrued') { window.location.href = '/accrued'; return; }
   S.dashboard = v;
   var h1 = document.querySelector('h1');
   if (v === 'ic') {
@@ -810,3 +811,17 @@ function icInRange(code) {
 })();
 
 if (typeof loadDivisions === 'function') { setTimeout(function () { try { loadDivisions(); } catch (e) { } }, 0); }
+
+
+// Allow deep links like /?dashboard=ic (used by the Accrued dashboard header)
+(function __numaDashParam() {
+  setTimeout(function () {
+    var m = String(window.location.search || '').match(/[?&]dashboard=([a-zA-Z]+)/);
+    if (!m) return;
+    var v = String(m[1]).toLowerCase();
+    if (v !== 'ap' && v !== 'ar' && v !== 'ic') return;
+    var sel = document.getElementById('dashboard');
+    if (sel) sel.value = v;
+    if (typeof onDashboardChange === 'function') onDashboardChange(v);
+  }, 900);
+})();
