@@ -13,6 +13,7 @@ const PORT = process.env.PORT || 3000;
 app.use(require('./exact-routes')(function () { return tokenData; }));
 app.use(require('./ageing-routes')(function () { return tokenData; }));
 app.use(require('./gl-balance-routes')(function () { return tokenData; }));
+app.use(require('./accrued-routes')(function () { return tokenData; }));
 
 // Middleware
 app.use(cors());
@@ -35,6 +36,11 @@ app.use(session({
 app.use(express.static('public'));
 
 // Root route - serve dashboard.html
+// Accrued dashboard page
+app.get('/accrued', (req, res) => {
+    res.sendFile(__dirname + '/public/accrued.html');
+});
+
 app.get('/', (req, res) => {
     res.sendFile(__dirname + '/public/dashboard.html');
 });
