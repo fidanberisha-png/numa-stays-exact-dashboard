@@ -52,8 +52,8 @@ module.exports = function (getToken) {
         }
         return rows;
     }
-    const SELECT_FULL = 'Date,EntryID,EntryNumber,JournalCode,JournalDescription,Description,AccountCode,AccountName,AmountDC,FinancialPeriod,FinancialYear,GLAccountCode,GLAccountDescription,LineNumber,Status';
-    const SELECT_MIN = 'Date,EntryID,EntryNumber,JournalCode,Description,AmountDC,FinancialPeriod,FinancialYear,GLAccountCode,GLAccountDescription,LineNumber';
+    const SELECT_FULL = 'Date,EntryID,EntryNumber,JournalCode,JournalDescription,Description,AccountCode,AccountName,AmountDC,FinancialPeriod,FinancialYear,GLAccountCode,GLAccountDescription,LineNumber,Status,CostCenter,CostCenterDescription';
+    const SELECT_MIN = 'Date,EntryID,EntryNumber,JournalCode,Description,AmountDC,FinancialPeriod,FinancialYear,GLAccountCode,GLAccountDescription,LineNumber,CostCenter,CostCenterDescription';
 
     // Exact Online is picky about paths, $select and $orderby on transaction lines,
     // so every query is tried in a few variants until one succeeds.
@@ -95,7 +95,7 @@ module.exports = function (getToken) {
             description: txt(r.Description),
             accountCode: txt(r.AccountCode),
             accountName: txt(r.AccountName),
-            glCode: txt(r.GLAccountCode),
+            costCenter: txt(r.CostCenter || r.CostCenterCode), costCenterName: txt(r.CostCenterDescription || r.CostCenterName), glCode: txt(r.GLAccountCode),
             glDescription: txt(r.GLAccountDescription),
             period: r.FinancialPeriod,
             year: r.FinancialYear,
