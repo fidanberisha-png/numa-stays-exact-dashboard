@@ -45,6 +45,9 @@ th, td { padding:9px 14px; text-align:left; white-space:nowrap; }
 th.num, td.num { text-align:right; }
 .mono { font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; }
 td.link { color:var(--blue); }
+td.desc { max-width:340px; overflow:hidden; text-overflow:ellipsis; }
+td.acct { max-width:240px; overflow:hidden; text-overflow:ellipsis; }
+table.inner td.desc { max-width:420px; }
 td.caret { color:var(--muted); width:22px; }
 thead th { background:#111823; color:var(--muted); font-size:11px; letter-spacing:.06em; position:sticky; top:0; }
 tbody tr.row { border-top:1px solid var(--line); cursor:pointer; }
