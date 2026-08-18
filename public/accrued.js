@@ -32,7 +32,7 @@
   ];
   var YEARS = [2026, 2025, 2024];
   var REGIONS = ['HQ', 'DACH', 'WEST', 'SOUTH'];
-  var S = { entity: 'consolidated', year: 'all', code: '272200', rows: [], open: {}, det: {}, busy: false, errors: [], q: '', done: 0, total: 0 };
+  var S = { entity: '1000', year: 'all', code: '272200', rows: [], open: {}, det: {}, busy: false, errors: [], q: '', done: 0, total: 0, sort: '', dir: 1 };
 
   function el(id) { return document.getElementById(id); }
   function esc(v) {
@@ -67,7 +67,7 @@
   }
   function years() { return S.year === 'all' ? [2024, 2025, 2026] : [parseInt(S.year, 10)]; }
   function shell() {
-    var opts = '<option value="consolidated">Consolidated (' + ENT.length + ' selected entities)</option>';
+    var opts = '';
     REGIONS.forEach(function (reg) {
       opts += '<optgroup label="' + reg + '">';
       ENT.filter(function (m) { return m[0] === reg; }).forEach(function (m) {
@@ -94,7 +94,7 @@
       '<button class="btn sec" id="refresh">Refresh</button>',
       '<a class="btn" href="/auth/login">Connect Exact Online</a>',
       '</header>',
-      '<div id="entTabs" class="tabs"></div>',
+      '',
       '<h1>Accrued</h1>',
       '<div class="sub" id="asof">Transactions | G/L Account - live data from Exact Online</div>',
       '<div class="controls">',
@@ -105,7 +105,7 @@
       '<div class="ctl"><label>&nbsp;</label><button class="btn sec" id="expandAll">Expand all</button></div>',
       '</div>',
       '<div class="kpis" id="kpis"></div>',
-      '<div class="wrap" id="wrap"><div class="state">Choose a financial year and press Apply</div></div>',
+      '<div class="sumbox" id="sumWrap"></div>', '<div class="wrap" id="wrap"><div class="state">Choose a financial year and press Apply</div></div>',
       '<div class="note" id="note"></div>'
     ].join('');
     el('company').value = S.entity;
@@ -146,7 +146,7 @@
       };
     }
   }
-  function shortName(n) {
+  function nsTime(v){ var s=String(v||''); var m=s.match(/\/Date\((\-?[0-9]+)/); if(m) return Number(m[1]); var t=Date.parse(s); return isNaN(t)?0:t; } function nsSortKey(lbl){ var m={ 'Date':'date', 'Period':'period', 'Entry no.':'entryNumber', 'Journal':'journalCode', 'Description':'description', 'Account':'accountCode', 'Debit':'debit', 'Credit':'credit' }; return m[lbl]||''; } function nsSort(arr){ var k=nsSortKey(S.sort); if(!k) return arr; var c=arr.slice(); c.sort(function(x,y){ var a,b; if(k==='date'){ a=nsTime(x.date); b=nsTime(y.date); } else { a=x[k]; b=y[k]; } if(typeof a==='number'||typeof b==='number'){ return (Number(a||0)-Number(b||0))*S.dir; } a=String(a||'').toLowerCase(); b=String(b||'').toLowerCase(); return (a<b?-1:(a>b?1:0))*S.dir; }); return c; } function nsEntries(rows){ var o={}; rows.forEach(function(l){ o[keyOf(l)]=1; }); return Object.keys(o).length; } function nsSummary(rows){ var y={}; rows.forEach(function(l){ var k=String(l.year||''); if(!y[k]) y[k]={n:0,d:0,c:0}; y[k].n++; y[k].d+=Number(l.debit||0); y[k].c+=Number(l.credit||0); }); var ks=Object.keys(y).sort(); if(ks.length<2) return ''; var h=''; ks.forEach(function(k){ var v=y[k]; h+='<div class="sumcard"><b>' + esc(k) + '</b><span class="sml">' + v.n + ' lines</span><span class="sml">Debit ' + eur(v.d) + '</span><span class="sml">Credit ' + eur(v.c) + '</span><span class="snet">Net ' + eur(v.d - v.c) + '</span></div>'; }); return h; } function nsEnhance(w){ try { var t=w.querySelector('table'); if(!t) return; var rows=t.querySelectorAll('tbody tr.row'); var last=null; for(var i=0;i<rows.length;i++){ var e=rows[i].getAttribute('data-e'); var isNew=(e!==last); last=e; rows[i].className='row'+((i%2)?' alt':'')+((isNew&&i)?' grp':''); } var ths=t.querySelectorAll('thead th'); for(var s=0;s<ths.length;s++){ (function(th){ var lbl=(th.textContent||'').trim(); if(!nsSortKey(lbl)) return; th.className=(th.className?th.className+' ':'')+'sortable'+(S.sort===lbl?(S.dir>0?' ns-asc':' ns-dsc'):''); th.title='Sort by ' + lbl; th.onclick=function(){ if(S.sort===lbl){ S.dir=-S.dir; } else { S.sort=lbl; S.dir=1; } draw(); }; })(ths[s]); } } catch(err){} } function shortName(n) {
     var s = String(n || '');
     s = s.replace(/ GmbH| B\.V\.| S\.L\.| S\.r\.l\.| SRL| ApS| AS| SE| Ltd| Limited| s\.r\.o\.| S\.A\.S\.|, unipessoal Lda|, UNIPESSOAL, LDA\.|LDA\./g, '');
     return s.trim();
@@ -222,9 +222,9 @@
   function setStatus(t) {
     var a = el('asof');
     if (!a) return;
-    a.textContent = t || ('Transactions | G/L Account ' + S.code + ' - ' + (S.year === 'all' ? '2024 - 2026' : S.year) + ' - updated ' + new Date().toLocaleTimeString('de-DE'));
+    var en = entOf(S.entity); a.textContent = t || ((en ? en[1] + ' - ' + en[3] : 'Entity') + '  \u00b7  G/L ' + S.code + '  \u00b7  ' + (S.year === 'all' ? 'financial years 2024 - 2026' : 'financial year ' + S.year) + '  \u00b7  updated ' + new Date().toLocaleTimeString('de-DE'));
   }
-  function filtered() {
+  function filtered() { return nsSort(filteredRaw()); } function filteredRaw() {
     var q = (S.q || '').trim().toLowerCase();
     if (!q) return S.rows;
     return S.rows.filter(function (l) {
@@ -244,13 +244,13 @@
     var k = el('kpis');
     if (k) {
       k.innerHTML = [
-        kpi('TRANSACTION LINES', String(rows.length), (S.busy ? 'loading ' + S.done + '/' + S.total : Object.keys(ents).length + ' entities')),
+        kpi('TRANSACTION LINES', String(rows.length), (S.busy ? 'loading ' + S.done + '/' + S.total : (S.q ? rows.length + ' of ' + S.rows.length + ' lines match the search' : nsEntries(rows) + ' journal entries'))),
         kpi('TOTAL DEBIT', eur(d), 'sum of all debit lines'),
         kpi('TOTAL CREDIT', eur(c), 'sum of all credit lines'),
-        kpi('BALANCE (DEBIT - CREDIT)', eur(bal), okBal ? 'balanced' : 'not balanced', okBal ? 'var(--green)' : 'var(--yellow)')
+        kpi('NET (DEBIT - CREDIT)', eur(bal), 'debit minus credit of the lines shown', 'var(--blue)')
       ].join('');
     }
-    var w = el('wrap');
+    var sw = el('sumWrap'); if (sw) sw.innerHTML = nsSummary(rows); var w = el('wrap');
     if (!w) return;
     if (!rows.length) {
       w.innerHTML = '<div class="state">' + (S.busy ? 'Loading data from Exact Online (' + S.done + '/' + S.total + ')' : 'No transactions for this selection') + '</div>';
@@ -261,7 +261,7 @@
     var h = '<table><thead><tr>';
     h += '<th style="width:22px"></th>';
     if (cons) h += '<th>Entity</th>';
-    h += '<th>Date</th><th>Entry no.</th><th>Journal</th><th>Description</th><th>Account</th><th class="num">Debit</th><th class="num">Credit</th>';
+    var nsShown = {}; var hasAcct = false; rows.forEach(function(l){ if (l.accountCode || l.accountName) hasAcct = true; }); h += '<th>Date</th><th>Period</th><th>Entry no.</th><th>Journal</th><th>Description</th>' + (hasAcct ? '<th>Account</th>' : '') + '<th class="num">Debit</th><th class="num">Credit</th>';
     h += '</tr></thead><tbody>';
     rows.forEach(function (l) {
       var key = keyOf(l);
@@ -270,22 +270,22 @@
       h += '<td class="caret">' + (isOpen ? '\u25be' : '\u25b8') + '</td>';
       if (cons) h += '<td>' + esc(l.entityCode + ' - ' + shortName(l.entityName)) + '</td>';
       h += '<td>' + fmtDate(l.date) + '</td>';
-      h += '<td class="mono link">' + esc(l.entryNumber) + '</td>';
+      h += '<td class="mono per">' + esc(l.year) + ' P' + esc(l.period) + '</td>'; h += '<td class="mono link">' + esc(l.entryNumber) + '</td>';
       h += '<td>' + esc(l.journalCode + (l.journalDescription ? ' - ' + l.journalDescription : '')) + '</td>';
       h += '<td class=\'desc\' title="' + esc(l.description) + '">' + esc(l.description) + '</td>';
-      h += '<td class=\'acct\' title="' + esc(l.accountName) + '">' + esc(l.accountCode ? (l.accountCode + ' - ' + l.accountName) : l.accountName) + '</td>';
+      if (hasAcct) h += '<td class=\'acct\' title="' + esc(l.accountName) + '">' + esc(l.accountCode ? (l.accountCode + ' - ' + l.accountName) : l.accountName) + '</td>';
       h += '<td class="num">' + (l.debit ? eur(l.debit) : '') + '</td>';
       h += '<td class="num">' + (l.credit ? eur(l.credit) : '') + '</td>';
       h += '</tr>';
-      if (isOpen) {
-        h += '<tr class="detail"><td colspan="' + (cons ? 9 : 8) + '">' + detailHtml(key) + '</td></tr>';
+      if (isOpen && !nsShown[key]) { nsShown[key] = 1;
+        h += '<tr class="detail"><td colspan="' + ((cons ? 10 : 9) - (hasAcct ? 0 : 1)) + '">' + detailHtml(key) + '</td></tr>';
       }
     });
     h += '</tbody><tfoot>';
-    h += '<tr><td colspan="' + (cons ? 6 : 5) + '">Total</td><td></td><td class="num">' + eur(d) + '</td><td class="num">' + eur(c) + '</td></tr>';
-    h += '<tr><td colspan="' + (cons ? 6 : 5) + '">Balance (Debit - Credit)</td><td></td><td class="num" colspan="2" style="color:' + (okBal ? '#33d755' : '#ffc107') + '">' + eur(bal) + (okBal ? '  \u2713 balanced' : '  \u26a0 not balanced') + '</td></tr>';
+    h += '<tr><td colspan="' + (cons ? 7 : 6) + '">Total of ' + rows.length + ' lines</td>' + (hasAcct ? '<td></td>' : '') + '<td class="num">' + eur(d) + '</td><td class="num">' + eur(c) + '</td></tr>';
+    h += '<tr><td colspan="' + (cons ? 7 : 6) + '">Net (Debit - Credit)</td>' + (hasAcct ? '<td></td>' : '') + '<td class="num" colspan="2" style="color:#8fd0ff">' + eur(bal) + '</td></tr>';
     h += '</tfoot></table>';
-    w.innerHTML = h;
+    w.innerHTML = h; nsEnhance(w);
     var trs = w.querySelectorAll('tr.row');
     for (var i = 0; i < trs.length; i++) {
       trs[i].onclick = function () { toggle(this.getAttribute('data-k'), this.getAttribute('data-d'), this.getAttribute('data-e'), this.getAttribute('data-y')); };
@@ -300,7 +300,7 @@
   function note() {
     var n = el('note');
     if (!n) return;
-    var t = 'Click a row (Entry no.) to open the full entry: G/L Account, Description, Debit, Credit and the entry total (balance check).';
+    var t = 'Click any row to open the full journal entry: G/L account, description, debit, credit and the entry total (balance check). Click a column header to sort, and use the search box to filter.';
     if (S.errors.length) t += ' Errors: ' + S.errors.join(' | ');
     n.textContent = t;
   }
