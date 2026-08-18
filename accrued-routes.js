@@ -1,6 +1,6 @@
 // Accrued dashboard routes - live data from Exact Online
-// GET /api/accrued/transactions?division=<id>&year=<yyyy>&code=<glcode>
-// GET /api/accrued/entry?division=<id>&entry=<entryNumber>&year=<yyyy>
+// GET /api/accrued/transactions  division, year, code
+// GET /api/accrued/entry         division, entryId (preferred) or entry + year
 const express = require('express');
 const axios = require('axios');
 const REGION = process.env.EXACT_REGION || 'nl';
@@ -52,9 +52,11 @@ module.exports = function (getToken) {
         }
         return rows;
     }
-    const SELECT_FULL = 'Date,EntryNumber,JournalCode,JournalDescription,Description,AccountCode,AccountName,AmountDC,FinancialPeriod,FinancialYear,GLAccountCode,GLAccountDescription,LineNumber,Status';
-    const SELECT_MIN = 'Date,EntryNumber,JournalCode,Description,AccountCode,AccountName,AmountDC,FinancialPeriod,FinancialYear,GLAccountCode,GLAccountDescription,LineNumber';
+    const SELECT_FULL = 'Date,EntryID,EntryNumber,JournalCode,JournalDescription,Description,AccountCode,AccountName,AmountDC,FinancialPeriod,FinancialYear,GLAccountCode,GLAccountDescription,LineNumber,Status';
+    const SELECT_MIN = 'Date,EntryID,EntryNumber,JournalCode,Description,AmountDC,FinancialPeriod,FinancialYear,GLAccountCode,GLAccountDescription,LineNumber';
 
+    // Exact Online is picky about paths, $select and $orderby on transaction lines,
+    // so every query is tried in a few variants until one succeeds.
     async function fetchLines(division, filter, orderby, h) {
         const P1 = 'financialtransaction/TransactionLines';
         const P2 = 'bulk/Financial/TransactionLines';
@@ -62,6 +64,8 @@ module.exports = function (getToken) {
             P1 + '?$filter=' + filter + '&$orderby=' + orderby + '&$select=' + SELECT_FULL,
             P1 + '?$filter=' + filter + '&$select=' + SELECT_FULL,
             P1 + '?$filter=' + filter + '&$select=' + SELECT_MIN,
+            P1 + '?$filter=' + filter,
+            P2 + '?$filter=' + filter + '&$select=' + SELECT_FULL,
             P2 + '?$filter=' + filter + '&$select=' + SELECT_MIN,
             P2 + '?$filter=' + filter
         ];
@@ -84,6 +88,7 @@ module.exports = function (getToken) {
         const amt = Number(r.AmountDC) || 0;
         return {
             date: r.Date || null,
+            entryId: txt(r.EntryID),
             entryNumber: r.EntryNumber,
             journalCode: txt(r.JournalCode),
             journalDescription: txt(r.JournalDescription),
@@ -144,34 +149,46 @@ module.exports = function (getToken) {
         const h = headers();
         if (!h) return res.status(401).json({ error: 'Not authenticated' });
         const division = req.query.division ? String(req.query.division) : null;
+        const entryId = req.query.entryId ? String(req.query.entryId).replace(/[^0-9a-fA-F-]/g, '') : '';
         const entry = req.query.entry ? String(req.query.entry).replace(/[^0-9]/g, '') : '';
         const year = req.query.year ? parseInt(String(req.query.year), 10) : null;
         if (!division) return res.status(400).json({ error: 'division is required' });
-        if (!entry) return res.status(400).json({ error: 'entry is required' });
-        try {
-            let filter = 'EntryNumber eq ' + entry;
-            if (year) filter = filter + ' and FinancialYear eq ' + year;
-            const rows = await fetchLines(division, filter, 'LineNumber', h);
-            const lines = rows.map(mapLine);
-            const head = lines.length ? lines[0] : null;
-            res.json({
-                division: division,
-                entryNumber: entry,
-                year: year,
-                journal: head ? (head.journalCode + (head.journalDescription ? ' - ' + head.journalDescription : '')) : '',
-                period: head ? head.period : null,
-                lines: lines,
-                totals: totalsOf(lines),
-                lastUpdated: new Date().toISOString()
-            });
-        } catch (e) {
-            const status = (e.response && e.response.status) || 500;
-            res.status(status === 401 ? 401 : 500).json({
+        if (!entryId && !entry) return res.status(400).json({ error: 'entryId or entry is required' });
+        const filters = [];
+        if (entryId) filters.push("EntryID eq guid'" + entryId + "'");
+        if (entry && year) filters.push('FinancialYear eq ' + year + ' and EntryNumber eq ' + entry);
+        if (entry) filters.push('EntryNumber eq ' + entry);
+        let rows = null;
+        let last = null;
+        for (let i = 0; i < filters.length; i++) {
+            try {
+                rows = await fetchLines(division, filters[i], 'LineNumber', h);
+                if (rows && rows.length) break;
+            } catch (e) {
+                last = e;
+            }
+        }
+        if (!rows) {
+            const status = (last && last.response && last.response.status) || 500;
+            return res.status(status === 401 ? 401 : 500).json({
                 error: 'Failed to load entry',
-                detail: e.message,
+                detail: last ? last.message : 'no data',
                 status: status
             });
         }
+        const lines = rows.map(mapLine).sort(function (a, b) { return (a.lineNumber || 0) - (b.lineNumber || 0); });
+        const head = lines.length ? lines[0] : null;
+        res.json({
+            division: division,
+            entryNumber: head ? head.entryNumber : entry,
+            entryId: entryId,
+            year: head ? head.year : year,
+            period: head ? head.period : null,
+            journal: head ? (head.journalCode + (head.journalDescription ? ' - ' + head.journalDescription : '')) : '',
+            lines: lines,
+            totals: totalsOf(lines),
+            lastUpdated: new Date().toISOString()
+        });
     });
 
     return router;
