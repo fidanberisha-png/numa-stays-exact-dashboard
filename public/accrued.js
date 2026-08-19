@@ -115,7 +115,7 @@
     el('year').onchange = function () { S.year = this.value; };
     el('gl').onchange = function () { S.code = this.value; };
     el('apply').onclick = function () { run(); };
-    el('refresh').onclick = function () { run(); };
+    el('refresh').onclick = function () { S.fresh = true; run(); };
     el('expandAll').onclick = function () { expandAll(); }; el('vDet').onclick = function () { S.view = 'details'; paintView(); draw(); }; el('vSum').onclick = function () { S.view = 'summary'; paintView(); draw(); }; paintView();
     el('q').oninput = function () { S.q = this.value; draw(); };
     el('dashboard').value = 'accrued';
@@ -167,10 +167,10 @@
 
   function sleep(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
 
-  async function fetchOne(div, year) {
+  async function fetchOne(div, year, fresh) {
     for (var a = 0; a < 3; a++) {
       try {
-        var r = await fetch('/api/accrued/transactions?division=' + div + '&year=' + year + '&code=' + encodeURIComponent(S.code), { credentials: 'same-origin' });
+        var r = await fetch('/api/accrued/transactions?division=' + div + '&year=' + year + '&code=' + encodeURIComponent(S.code) + (fresh ? '&fresh=1' : ''), { credentials: 'same-origin' });
         var j = await r.json();
         if (r.ok && j && !j.error) return j;
         if (r.status === 401) return { error: 'Not connected to Exact Online' };
@@ -183,7 +183,14 @@
     return { error: 'unknown' };
   }
 
-  async function fetchSum(div, year) { for (var a = 0; a < 2; a++) { try { var r = await fetch('/api/accrued/summary?division=' + div + '&year=' + year + '&code=' + encodeURIComponent(S.code), { credentials: 'same-origin' }); var j = await r.json(); if (r.ok && j && !j.error) return j; if (r.status === 401) return { error: 'Not connected to Exact Online' }; if (a === 1) return { error: (j && (j.error || j.detail)) || ('HTTP ' + r.status) }; } catch (e) { if (a === 1) return { error: String(e) }; } await sleep(1500); } return { error: 'unknown' }; } async function run() {
+  async function fetchSum(div, year, fresh) { for (var a = 0; a < 2; a++) { try { var r = await fetch('/api/accrued/summary?division=' + div + '&year=' + year + '&code=' + encodeURIComponent(S.code) + (fresh ? '&fresh=1' : ''), { credentials: 'same-origin' }); var j = await r.json(); if (r.ok && j && !j.error) return j; if (r.status === 401) return { error: 'Not connected to Exact Online' }; if (a === 1) return { error: (j && (j.error || j.detail)) || ('HTTP ' + r.status) }; } catch (e) { if (a === 1) return { error: String(e) }; } await sleep(1500); } return { error: 'unknown' }; }
+
+  // One entity is one division in Exact Online, and Exact counts its request
+  // limit per division. Different entities can therefore be read side by side
+  // without pushing that limit, while the years of one entity stay one after
+  // the other. That is what turns twenty entities from minutes into seconds.
+  var LANES = 5;
+  async function run() {
     if (S.busy) return;
     S.busy = true;
     if (!S.entity) { S.busy = false; S.rows = []; S.srows = []; draw(); setStatus(''); return; } S.rows = []; S.srows = [];
@@ -194,26 +201,42 @@
     var ys = years();
     S.total = list.length * ys.length;
     S.done = 0;
+    var fresh = S.fresh ? 1 : 0;
+    S.fresh = false;
     draw();
-    for (var i = 0; i < list.length; i++) {
-      for (var k = 0; k < ys.length; k++) {
-        var m = list[i];
-        setStatus('Loading ' + (S.done + 1) + '/' + S.total + ' - ' + m[1] + ' ' + m[3] + ' (' + ys[k] + ')');
-        var j = (S.view === 'summary') ? await fetchSum(m[2], ys[k]) : await fetchOne(m[2], ys[k]);
-        S.done++;
-        if (j.error) {
-          S.errors.push(m[1] + ' ' + ys[k] + ': ' + j.error);
-        } else {
-          ((S.view === 'summary' ? j.rows : j.lines) || []).forEach(function (l) {
-            l.entityCode = m[1];
-            l.entityName = m[3];
-            l.division = m[2];
-            if (S.view === 'summary') { S.srows.push(l); } else { S.rows.push(l); }
-          });
+    var next = 0;
+    var lastDraw = 0;
+    function tick() {
+      var now = Date.now();
+      if (now - lastDraw < 400) return;
+      lastDraw = now;
+      draw();
+    }
+    async function lane() {
+      while (next < list.length) {
+        var m = list[next++];
+        for (var k = 0; k < ys.length; k++) {
+          var j = (S.view === 'summary') ? await fetchSum(m[2], ys[k], fresh) : await fetchOne(m[2], ys[k], fresh);
+          S.done++;
+          if (j.error) {
+            S.errors.push(m[1] + ' ' + ys[k] + ': ' + j.error);
+          } else {
+            ((S.view === 'summary' ? j.rows : j.lines) || []).forEach(function (l) {
+              l.entityCode = m[1];
+              l.entityName = m[3];
+              l.division = m[2];
+              if (S.view === 'summary') { S.srows.push(l); } else { S.rows.push(l); }
+            });
+          }
+          setStatus('Loading ' + S.done + ' of ' + S.total + ' entity-years' + (S.errors.length ? ' - ' + S.errors.length + ' failed' : ''));
+          tick();
         }
-        draw();
       }
     }
+    var lanes = [];
+    var wide = Math.min(LANES, list.length);
+    for (var q = 0; q < wide; q++) lanes.push(lane());
+    await Promise.all(lanes);
     S.busy = false;
     setStatus('');
     draw();
