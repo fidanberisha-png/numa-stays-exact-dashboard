@@ -37,11 +37,12 @@ module.exports = function (getToken) {
         throw last;
     }
 
-    async function fetchAll(division, path, h, maxPages) {
+    async function fetchAll(division, path, h, maxPages, meta) {
         let url = BASE + '/' + division + '/' + path;
         let rows = [];
         let pages = 0;
-        while (url && pages < (maxPages || 40)) {
+        const cap = maxPages || 40;
+        while (url && pages < cap) {
             const r = await getWithRetry(url, h, 4);
             const d = r.data && r.data.d ? r.data.d : r.data;
             const part = d && d.results ? d.results : (Array.isArray(d) ? d : []);
@@ -50,6 +51,9 @@ module.exports = function (getToken) {
             pages = pages + 1;
             if (url) await sleep(150);
         }
+        // A page limit that is hit silently is what used to make counter lines disappear,
+        // so the caller is told about it instead of getting half of the journal entry.
+        if (url && meta) meta.truncated = true;
         return rows;
     }
     const SELECT_FULL = 'Date,EntryID,EntryNumber,JournalCode,JournalDescription,Description,AccountCode,AccountName,AmountDC,FinancialPeriod,FinancialYear,GLAccountCode,GLAccountDescription,LineNumber,Status,CostCenter,CostCenterDescription';
@@ -57,22 +61,29 @@ module.exports = function (getToken) {
 
     // Exact Online is picky about paths, $select and $orderby on transaction lines,
     // so every query is tried in a few variants until one succeeds.
-    async function fetchLines(division, filter, orderby, h) {
+    async function fetchLines(division, filter, orderby, h, opts) {
+        const o = opts || {};
         const P1 = 'financialtransaction/TransactionLines';
         const P2 = 'bulk/Financial/TransactionLines';
-        const tries = [
+        const small = [
             P1 + '?$filter=' + filter + '&$orderby=' + orderby + '&$select=' + SELECT_FULL,
             P1 + '?$filter=' + filter + '&$select=' + SELECT_FULL,
             P1 + '?$filter=' + filter + '&$select=' + SELECT_MIN,
-            P1 + '?$filter=' + filter,
+            P1 + '?$filter=' + filter
+        ];
+        const bulk = [
             P2 + '?$filter=' + filter + '&$select=' + SELECT_FULL,
             P2 + '?$filter=' + filter + '&$select=' + SELECT_MIN,
             P2 + '?$filter=' + filter
         ];
+        // A bulk page holds 1000 lines, a normal page only 60. Month end and year end
+        // entries can carry thousands of lines, so bulk is asked first for those.
+        const tries = o.bulkFirst ? bulk.concat(small) : small.concat(bulk);
+        const cap = o.maxPages || 40;
         let last = null;
         for (let i = 0; i < tries.length; i++) {
             try {
-                return await fetchAll(division, tries[i], h, 40);
+                return await fetchAll(division, tries[i], h, cap, o.meta);
             } catch (e) {
                 last = e;
                 const st = e.response && e.response.status;
@@ -124,7 +135,7 @@ module.exports = function (getToken) {
         try {
             const filter = 'FinancialYear eq ' + year +
                 " and GLAccountCode ge '" + code + "' and GLAccountCode le '" + code + "zzzz'";
-            const rows = await fetchLines(division, filter, 'Date,EntryNumber', h);
+            const rows = await fetchLines(division, filter, 'Date,EntryNumber', h, { bulkFirst: true, maxPages: 400 });
             const lines = rows.map(mapLine).filter(function (l) { return l.glCode === code; });
             res.json({
                 division: division,
@@ -156,7 +167,8 @@ module.exports = function (getToken) {
         try {
             const filter = 'FinancialYear eq ' + year +
                 " and GLAccountCode ge '" + code + "' and GLAccountCode le '" + code + "zzzz'";
-            const raw = await fetchLines(division, filter, 'Date,EntryNumber', h);
+            const baseMeta = {};
+            const raw = await fetchLines(division, filter, 'Date,EntryNumber', h, { bulkFirst: true, maxPages: 400, meta: baseMeta });
             const base = raw.map(mapLine).filter(function (l) { return l.glCode === code; });
             const want = {};
             const nums = [];
@@ -167,11 +179,13 @@ module.exports = function (getToken) {
             });
             const counter = {};
             const errs = [];
+            if (baseMeta.truncated) errs.push('accrual lines: Exact paging was cut off, the year is incomplete');
             async function grab(list) {
                 if (!list.length) return;
                 const f = 'FinancialYear eq ' + year + ' and (' + list.map(function (n) { return 'EntryNumber eq ' + n; }).join(' or ') + ')';
+                const meta = {};
                 try {
-                    const lines = await fetchLines(division, f, 'EntryNumber', h);
+                    const lines = await fetchLines(division, f, 'EntryNumber', h, { bulkFirst: true, maxPages: 400, meta: meta });
                     lines.map(mapLine).forEach(function (l) {
                         if (l.glCode === code) return;
                         const k = String(l.entryNumber);
@@ -179,8 +193,18 @@ module.exports = function (getToken) {
                         if (!counter[k]) counter[k] = [];
                         counter[k].push(l);
                     });
+                    if (meta.truncated && list.length > 1) {
+                        // Half of a journal entry is worse than no answer, so the block is
+                        // thrown away and asked again in smaller pieces.
+                        list.forEach(function (n) { delete counter[n]; });
+                        const half2 = Math.ceil(list.length / 2);
+                        await grab(list.slice(0, half2));
+                        await grab(list.slice(half2));
+                    } else if (meta.truncated) {
+                        errs.push('entry ' + list[0] + ': Exact paging was cut off');
+                    }
                 } catch (e) {
-                    if (list.length > 8) {
+                    if (list.length > 1) {
                         const half = Math.ceil(list.length / 2);
                         await grab(list.slice(0, half));
                         await grab(list.slice(half));
@@ -189,7 +213,26 @@ module.exports = function (getToken) {
                     }
                 }
             }
-            for (let i = 0; i < nums.length; i += 60) { await grab(nums.slice(i, i + 60)); await sleep(120); }
+            for (let i = 0; i < nums.length; i += 20) { await grab(nums.slice(i, i + 20)); await sleep(120); }
+            // Second pass: an entry that still has no counter line is asked on its own, so a
+            // paging problem can never be shown as if the bookkeeping were incomplete.
+            const orphans = nums.filter(function (n) { return !counter[n] || !counter[n].length; });
+            for (let i = 0; i < orphans.length; i++) {
+                const m2 = {};
+                try {
+                    const lines = await fetchLines(division, 'FinancialYear eq ' + year + ' and EntryNumber eq ' + orphans[i], 'LineNumber', h, { bulkFirst: true, maxPages: 400, meta: m2 });
+                    lines.map(mapLine).forEach(function (l) {
+                        if (l.glCode === code) return;
+                        const k = String(l.entryNumber);
+                        if (!counter[k]) counter[k] = [];
+                        counter[k].push(l);
+                    });
+                    if (m2.truncated) errs.push('entry ' + orphans[i] + ': Exact paging was cut off');
+                } catch (e) {
+                    errs.push('entry ' + orphans[i] + ': ' + e.message);
+                }
+                await sleep(120);
+            }
 
             // The line on the accrual account itself is the truth: cost centre, period and
             // amount are taken from it, so every cell of the dashboard ties back to the G/L
@@ -217,6 +260,7 @@ module.exports = function (getToken) {
                     rows.push({
                         entryNumber: acc.entryNumber, entryId: acc.entryId, date: acc.date,
                         year: acc.year, period: acc.period, glCode: '', glDescription: '',
+                        noCounter: true,
                         costCenter: cc, costCenterName: acc.costCenterName,
                         description: acc.description,
                         debit: target > 0 ? target : 0, credit: target < 0 ? -target : 0, amount: target
@@ -292,7 +336,7 @@ module.exports = function (getToken) {
         let last = null;
         for (let i = 0; i < filters.length; i++) {
             try {
-                rows = await fetchLines(division, filters[i], 'LineNumber', h);
+                rows = await fetchLines(division, filters[i], 'LineNumber', h, { bulkFirst: true, maxPages: 400 });
                 if (rows && rows.length) break;
             } catch (e) {
                 last = e;
