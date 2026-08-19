@@ -58,6 +58,25 @@ module.exports = function (getToken) {
         return res.json(data);
     }
 
+    // One journal entry usually carries several of the accrual accounts of an entity.
+    // Its lines are therefore kept per division and financial year, so reading nine
+    // accounts of one entity does not read the same entry nine times over. This is
+    // what keeps the merged view inside the request budget of Exact.
+    const LINES = new Map();
+    const LINES_TTL = 20 * 60 * 1000;
+    function lineKey(division, year, entry) { return division + '|' + year + '|' + entry; }
+    function lineGet(division, year, entry) {
+        const k = lineKey(division, year, entry);
+        const hit = LINES.get(k);
+        if (!hit) return null;
+        if (Date.now() - hit.at > LINES_TTL) { LINES.delete(k); return null; }
+        return hit.rows;
+    }
+    function lineSet(division, year, entry, rows) {
+        if (LINES.size > 8000) LINES.clear();
+        LINES.set(lineKey(division, year, entry), { at: Date.now(), rows: rows });
+    }
+
     async function getWithRetry(url, h, attempts) {
         const n = attempts || 4;
         let last = null;
@@ -66,6 +85,16 @@ module.exports = function (getToken) {
                 return await axios.get(url, { headers: h, timeout: 30000 });
             } catch (e) {
                 last = e;
+                if (e.response && e.response.status === 429 && e.response.headers) {
+                    e.rate = {
+                        limit: e.response.headers['x-ratelimit-limit'],
+                        remaining: e.response.headers['x-ratelimit-remaining'],
+                        minutelyLimit: e.response.headers['x-ratelimit-minutely-limit'],
+                        minutelyRemaining: e.response.headers['x-ratelimit-minutely-remaining'],
+                        reset: e.response.headers['x-ratelimit-reset'],
+                        retryAfter: e.response.headers['retry-after']
+                    };
+                }
                 const status = e.response && e.response.status;
                 if ((status === 429 || status === 503) && i < n - 1) {
                     const retryAfter = e.response.headers && e.response.headers['retry-after'];
@@ -77,6 +106,30 @@ module.exports = function (getToken) {
             }
         }
         throw last;
+    }
+
+    // Exact answers 429 both when the minute budget and when the day budget of a
+    // division is used up. Its own headers tell which one it is, so the dashboard can
+    // say it in plain words instead of showing an empty table.
+    function askedTooMuch(e) {
+        const st = (e && e.response && e.response.status) || 0;
+        if (st !== 429) return null;
+        const r = (e && e.rate) || {};
+        const dayLeft = Number(r.remaining);
+        const minLeft = Number(r.minutelyRemaining);
+        if (!isNaN(dayLeft) && dayLeft <= 0) {
+            let when = '';
+            const ms = Number(r.reset);
+            if (!isNaN(ms) && ms > 0) {
+                const d = new Date(ms);
+                if (!isNaN(d.getTime())) when = ' It is free again on ' + d.toISOString().slice(0, 16).replace('T', ' ') + ' UTC.';
+            }
+            return 'Exact Online has no requests left today for this entity (day limit ' + (r.limit || '?') + ').' + when;
+        }
+        if (!isNaN(minLeft) && minLeft <= 0) {
+            return 'Exact Online is busy with this entity right now (minute limit ' + (r.minutelyLimit || '?') + '). Try again in a minute.';
+        }
+        return 'Exact Online refused this request (429). Left today: ' + (r.remaining === undefined ? 'unknown' : r.remaining) + ', left this minute: ' + (r.minutelyRemaining === undefined ? 'unknown' : r.minutelyRemaining) + '.';
     }
 
     async function fetchAll(division, path, h, maxPages, meta) {
@@ -196,8 +249,9 @@ module.exports = function (getToken) {
             return sendCached(res, ckey, { division: division, accounts: out, lastUpdated: new Date().toISOString() });
         } catch (e) {
             const status = (e.response && e.response.status) || 500;
+            const rl = askedTooMuch(e);
             return res.status(status).json({
-                error: 'Failed to load the accrual accounts of this entity',
+                error: rl || 'Failed to load the accrual accounts of this entity',
                 detail: (e.response && e.response.data) ? String(e.response.data).slice(0, 400) : e.message
             });
         }
@@ -231,8 +285,9 @@ module.exports = function (getToken) {
             });
         } catch (e) {
             const status = (e.response && e.response.status) || 500;
+            const rl = askedTooMuch(e);
             res.status(status === 401 ? 401 : 500).json({
-                error: 'Failed to load accrued transactions',
+                error: rl || 'Failed to load accrued transactions',
                 detail: e.message,
                 status: status
             });
@@ -267,23 +322,43 @@ module.exports = function (getToken) {
             const counter = {};
             const errs = [];
             if (baseMeta.truncated) errs.push('accrual lines: Exact paging was cut off, the year is incomplete');
+            // An entry whose lines are known is marked, so the second pass below can tell
+            // a real bookkeeping gap from an entry that was simply never read.
+            const done = {};
+            function useLines(n, all) {
+                done[n] = 1;
+                const keep = all.filter(function (l) { return l.glCode !== code; });
+                if (keep.length) { counter[n] = keep; } else { delete counter[n]; }
+            }
             async function grab(list) {
                 if (!list.length) return;
+                const need = list.filter(function (n) {
+                    const c = lineGet(division, year, n);
+                    if (!c) return true;
+                    useLines(n, c);
+                    return false;
+                });
+                if (!need.length) return;
+                list = need;
                 const f = 'FinancialYear eq ' + year + ' and (' + list.map(function (n) { return 'EntryNumber eq ' + n; }).join(' or ') + ')';
                 const meta = {};
                 try {
                     const lines = await fetchLines(division, f, 'EntryNumber', h, { bulkFirst: true, maxPages: 400, meta: meta });
+                    const byEntry = {};
                     lines.map(mapLine).forEach(function (l) {
-                        if (l.glCode === code) return;
                         const k = String(l.entryNumber);
                         if (!want[k]) return;
-                        if (!counter[k]) counter[k] = [];
-                        counter[k].push(l);
+                        if (!byEntry[k]) byEntry[k] = [];
+                        byEntry[k].push(l);
                     });
+                    if (!meta.truncated) {
+                        list.forEach(function (n) { lineSet(division, year, n, byEntry[n] || []); });
+                    }
+                    list.forEach(function (n) { useLines(n, byEntry[n] || []); });
                     if (meta.truncated && list.length > 1) {
                         // Half of a journal entry is worse than no answer, so the block is
                         // thrown away and asked again in smaller pieces.
-                        list.forEach(function (n) { delete counter[n]; });
+                        list.forEach(function (n) { delete counter[n]; delete done[n]; });
                         const half2 = Math.ceil(list.length / 2);
                         await grab(list.slice(0, half2));
                         await grab(list.slice(half2));
@@ -305,17 +380,14 @@ module.exports = function (getToken) {
             for (let i = 0; i < nums.length; i += 60) { await grab(nums.slice(i, i + 60)); await sleep(60); }
             // Second pass: an entry that still has no counter line is asked on its own, so a
             // paging problem can never be shown as if the bookkeeping were incomplete.
-            const orphans = nums.filter(function (n) { return !counter[n] || !counter[n].length; });
+            const orphans = nums.filter(function (n) { return (!counter[n] || !counter[n].length) && !done[n]; });
             for (let i = 0; i < orphans.length; i++) {
                 const m2 = {};
                 try {
                     const lines = await fetchLines(division, 'FinancialYear eq ' + year + ' and EntryNumber eq ' + orphans[i], 'LineNumber', h, { bulkFirst: true, maxPages: 400, meta: m2 });
-                    lines.map(mapLine).forEach(function (l) {
-                        if (l.glCode === code) return;
-                        const k = String(l.entryNumber);
-                        if (!counter[k]) counter[k] = [];
-                        counter[k].push(l);
-                    });
+                    const all2 = lines.map(mapLine);
+                    if (!m2.truncated) lineSet(division, year, orphans[i], all2);
+                    useLines(orphans[i], all2);
                     if (m2.truncated) errs.push('entry ' + orphans[i] + ': Exact paging was cut off');
                 } catch (e) {
                     errs.push('entry ' + orphans[i] + ': ' + e.message);
@@ -400,8 +472,9 @@ module.exports = function (getToken) {
             });
         } catch (e) {
             const status = (e.response && e.response.status) || 500;
+            const rl = askedTooMuch(e);
             res.status(status === 401 ? 401 : 500).json({
-                error: 'Failed to load accrued summary',
+                error: rl || 'Failed to load accrued summary',
                 detail: e.message,
                 status: status
             });
