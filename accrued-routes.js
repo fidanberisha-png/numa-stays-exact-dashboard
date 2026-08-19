@@ -14,7 +14,7 @@ module.exports = function (getToken) {
         if (!t) return null;
         return { Authorization: 'Bearer ' + t.access_token, Accept: 'application/json' };
     }
-    function sleep(ms) { return new Promise(function (r) { setTimeout(r, ms); }); } const VARIANT = {}; const GATE = {}; const CACHE = {}; const TTL = 900000; function cacheGet(k) { const e = CACHE[k]; if (!e) return null; if (Date.now() - e.t > TTL) { delete CACHE[k]; return null; } return e.v; } function cacheSet(k, v) { CACHE[k] = { t: Date.now(), v: v }; const ks = Object.keys(CACHE); if (ks.length > 300) { for (let i = 0; i < 100; i++) delete CACHE[ks[i]]; } } async function withGate(div, fn) { let g = GATE[div]; if (!g) { g = GATE[div] = { max: 3, cur: 0, q: [] }; } if (g.cur >= g.max) await new Promise(function (r) { g.q.push(r); }); g.cur++; try { return await fn(); } finally { g.cur--; const nx = g.q.shift(); if (nx) nx(); } } async function pool(items, n, fn) { let i = 0; const ws = []; const lim = Math.min(n, items.length); for (let w = 0; w < lim; w++) ws.push((async function () { while (true) { const ix = i++; if (ix >= items.length) return; await fn(items[ix], ix); } })()); await Promise.all(ws); }
+    function sleep(ms) { return new Promise(function (r) { setTimeout(r, ms); }); } const VARIANT = {}; const GATE = {}; const CACHE = {}; const TTL = 900000; function cacheGet(k) { const e = CACHE[k]; if (!e) return null; if (Date.now() - e.t > TTL) { delete CACHE[k]; return null; } return e.v; } function cacheSet(k, v) { CACHE[k] = { t: Date.now(), v: v }; const ks = Object.keys(CACHE); if (ks.length > 300) { for (let i = 0; i < 100; i++) delete CACHE[ks[i]]; } } async function withGate(div, fn) { let g = GATE[div]; if (!g) { g = GATE[div] = { max: 8, cur: 0, q: [] }; } if (g.cur >= g.max) await new Promise(function (r) { g.q.push(r); }); g.cur++; try { return await fn(); } finally { g.cur--; const nx = g.q.shift(); if (nx) nx(); } } async function pool(items, n, fn) { let i = 0; const ws = []; const lim = Math.min(n, items.length); for (let w = 0; w < lim; w++) ws.push((async function () { while (true) { const ix = i++; if (ix >= items.length) return; await fn(items[ix], ix); } })()); await Promise.all(ws); }
 
     async function getWithRetry(url, h, attempts) {
         const n = attempts || 4;
@@ -135,7 +135,7 @@ module.exports = function (getToken) {
         try {
             const filter = 'FinancialYear eq ' + year +
                 " and GLAccountCode ge '" + code + "' and GLAccountCode le '" + code + "zzzz'";
-            const rows = await fetchLines(division, filter, 'Date,EntryNumber', h, { bulkFirst: true, maxPages: 400 });
+            const bk = 'base|' + division + '|' + year + '|' + code; let rows = req.query.fresh ? null : cacheGet(bk); if (!rows) { rows = await fetchLines(division, filter, 'Date,EntryNumber', h, { bulkFirst: true, maxPages: 400 }); cacheSet(bk, rows); }
             const lines = rows.map(mapLine).filter(function (l) { return l.glCode === code; });
             res.json({
                 division: division,
@@ -168,8 +168,8 @@ module.exports = function (getToken) {
             const filter = 'FinancialYear eq ' + year +
                 " and GLAccountCode ge '" + code + "' and GLAccountCode le '" + code + "zzzz'";
             const baseMeta = {};
-            const raw = await fetchLines(division, filter, 'Date,EntryNumber', h, { bulkFirst: true, maxPages: 400, meta: baseMeta });
-            const base = raw.map(mapLine).filter(function (l) { return l.glCode === code; });
+            const bk = 'base|' + division + '|' + year + '|' + code; let raw = req.query.fresh ? null : cacheGet(bk); if (!raw) { raw = await fetchLines(division, filter, 'Date,EntryNumber', h, { bulkFirst: true, maxPages: 400, meta: baseMeta }); if (!baseMeta.truncated) cacheSet(bk, raw); }
+            let base = raw.map(mapLine).filter(function (l) { return l.glCode === code; }); const parts = Math.max(1, parseInt(String(req.query.parts || '1'), 10)); const pix = Math.max(0, parseInt(String(req.query.part || '0'), 10)); if (parts > 1) { const own = {}; let seen = 0; base.forEach(function (l) { const kk = String(l.entryNumber); if (!(kk in own)) { own[kk] = seen % parts; seen++; } }); base = base.filter(function (l) { return own[String(l.entryNumber)] === pix; }); }
             const want = {};
             const nums = [];
             base.forEach(function (l) {
@@ -182,7 +182,7 @@ module.exports = function (getToken) {
             if (baseMeta.truncated) errs.push('accrual lines: Exact paging was cut off, the year is incomplete');
             async function grab(list) {
                 if (!list.length) return;
-                const f = 'FinancialYear eq ' + year + ' and EntryNumber ge ' + list[0] + ' and EntryNumber le ' + list[list.length - 1];
+                const f = 'FinancialYear eq ' + year + ' and (' + list.map(function (n) { return 'EntryNumber eq ' + n; }).join(' or ') + ')';
                 const meta = {};
                 try {
                     const lines = await fetchLines(division, f, 'EntryNumber', h, { bulkFirst: true, maxPages: 400, meta: meta });
@@ -213,7 +213,7 @@ module.exports = function (getToken) {
                     }
                 }
             }
-            const snums = nums.slice().sort(function (x, y) { return Number(x) - Number(y); }); const blocks = []; let cb = []; snums.forEach(function (n) { if (cb.length && (cb.length >= 150 || (Number(n) - Number(cb[0])) > 1200)) { blocks.push(cb); cb = []; } cb.push(n); }); if (cb.length) blocks.push(cb); await pool(blocks, 3, function (b) { return grab(b); });
+            const blocks = []; for (let bi = 0; bi < nums.length; bi += 25) blocks.push(nums.slice(bi, bi + 25)); await pool(blocks, 6, function (b) { return grab(b); });
             // Second pass: an entry that still has no counter line is asked on its own, so a
             // paging problem can never be shown as if the bookkeeping were incomplete.
             const orphans = nums.filter(function (n) { return !sure[n] && (!counter[n] || !counter[n].length); });
