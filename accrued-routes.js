@@ -241,13 +241,27 @@ module.exports = function (getToken) {
                     });
                 });
             });
+            // One accrual can be spread over several counter accounts, so the pieces are
+            // added up again per entry, cost centre, period and G/L account. This only
+            // shortens the list, the amounts stay exactly the same.
+            const agg = {};
+            const order = [];
+            rows.forEach(function (r) {
+                const k = r.entryNumber + '|' + r.costCenter + '|' + r.year + '|' + r.period + '|' + r.glCode;
+                if (!agg[k]) { agg[k] = r; order.push(k); return; }
+                const t = agg[k];
+                t.amount = Math.round((t.amount + r.amount) * 100) / 100;
+                t.debit = t.amount > 0 ? t.amount : 0;
+                t.credit = t.amount < 0 ? -t.amount : 0;
+            });
+            const outRows = order.map(function (k) { return agg[k]; }).filter(function (r) { return Math.abs(r.amount) > 0.000001; });
             res.json({
                 division: division,
                 year: year,
                 code: code,
                 entries: nums.length,
                 accrualLines: base.length,
-                rows: rows,
+                rows: outRows,
                 chunkErrors: errs,
                 lastUpdated: new Date().toISOString()
             });
