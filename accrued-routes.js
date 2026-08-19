@@ -16,6 +16,30 @@ module.exports = function (getToken) {
     }
     function sleep(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
 
+    // A whole financial year of a division is read from Exact in seconds, and the
+    // very same year is asked again every time the page is opened or an entity is
+    // switched. The finished answer is therefore kept in memory for a while, so
+    // opening all entities pays that price only once. The Refresh button asks for
+    // fresh data and always goes back to Exact.
+    const CACHE = new Map();
+    const CACHE_TTL = 20 * 60 * 1000;
+    function cacheGet(key, fresh) {
+        if (fresh) { CACHE.delete(key); return null; }
+        const hit = CACHE.get(key);
+        if (!hit) return null;
+        if (Date.now() - hit.at > CACHE_TTL) { CACHE.delete(key); return null; }
+        return hit.data;
+    }
+    function cacheSet(key, data) {
+        if (CACHE.size > 300) CACHE.clear();
+        CACHE.set(key, { at: Date.now(), data: data });
+        return data;
+    }
+    function sendCached(res, key, data) {
+        cacheSet(key, data);
+        return res.json(data);
+    }
+
     async function getWithRetry(url, h, attempts) {
         const n = attempts || 4;
         let last = null;
@@ -132,12 +156,16 @@ module.exports = function (getToken) {
         const year = req.query.year ? parseInt(String(req.query.year), 10) : null;
         if (!division) return res.status(400).json({ error: 'division is required' });
         if (!year) return res.status(400).json({ error: 'year is required' });
+        const fresh = String(req.query.fresh || '') === '1';
+        const ckey = 'tx|' + division + '|' + year + '|' + code;
+        const hit = cacheGet(ckey, fresh);
+        if (hit) return res.json(hit);
         try {
             const filter = 'FinancialYear eq ' + year +
                 " and GLAccountCode ge '" + code + "' and GLAccountCode le '" + code + "zzzz'";
             const rows = await fetchLines(division, filter, 'Date,EntryNumber', h, { bulkFirst: true, maxPages: 400 });
             const lines = rows.map(mapLine).filter(function (l) { return l.glCode === code; });
-            res.json({
+            return sendCached(res, ckey, {
                 division: division,
                 year: year,
                 code: code,
@@ -164,6 +192,10 @@ module.exports = function (getToken) {
         const year = req.query.year ? parseInt(String(req.query.year), 10) : null;
         if (!division) return res.status(400).json({ error: 'division is required' });
         if (!year) return res.status(400).json({ error: 'year is required' });
+        const fresh = String(req.query.fresh || '') === '1';
+        const ckey = 'sum|' + division + '|' + year + '|' + code;
+        const hit = cacheGet(ckey, fresh);
+        if (hit) return res.json(hit);
         try {
             const filter = 'FinancialYear eq ' + year +
                 " and GLAccountCode ge '" + code + "' and GLAccountCode le '" + code + "zzzz'";
@@ -299,7 +331,7 @@ module.exports = function (getToken) {
                 t.credit = t.amount < 0 ? -t.amount : 0;
             });
             const outRows = order.map(function (k) { return agg[k]; }).filter(function (r) { return Math.abs(r.amount) > 0.000001; });
-            res.json({
+            return sendCached(res, ckey, {
                 division: division,
                 year: year,
                 code: code,
