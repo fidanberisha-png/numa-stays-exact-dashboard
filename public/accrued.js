@@ -300,7 +300,7 @@
   function note() {
     var n = el('note');
     if (!n) return;
-    var t = (S.view === 'summary') ? 'Summary: every row is a cost centre - open it to see the G/L accounts inside. The G/L account is taken from the other line of the same journal entry in Exact, the accrual account itself is left out. The columns are the financial periods and the last column is the Grand Total. Amounts are Debit minus Credit. The search box filters by cost centre or G/L account.' : 'Click any row to open the full journal entry: G/L account, description, debit, credit and the entry total (balance check). Click a column header to sort, and use the search box to filter.';
+    var t = (S.view === 'summary') ? 'Summary: every row is a cost centre - open it to see the G/L accounts inside. Cost centre, period and amount come from the line on the accrual account in Exact itself, so every cell ties back to that G/L account. The counter lines of the same journal entry only name the expense account and are spread pro rata when one entry carries several accruals. The columns are the financial periods and the last column is the Grand Total. Amounts are Debit minus Credit. The search box filters by cost centre or G/L account.' : 'Click any row to open the full journal entry: G/L account, description, debit, credit and the entry total (balance check). Click a column header to sort, and use the search box to filter.';
     if (S.errors.length) t += ' Errors: ' + S.errors.join(' | ');
     n.textContent = t;
   }
