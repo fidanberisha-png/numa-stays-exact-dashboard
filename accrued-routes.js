@@ -16,6 +16,24 @@ module.exports = function (getToken) {
     }
     function sleep(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
 
+    // Exact Online counts requests per division per minute and answers 429 when that
+    // budget is gone. Waiting for a free slot before asking is friendlier than being
+    // refused and retrying, so a division never spends more than BUDGET requests in
+    // any rolling minute and a busy entity simply takes a little longer.
+    const RATE = {};
+    const BUDGET = 50;
+    async function slot(division) {
+        for (let guard = 0; guard < 200; guard++) {
+            if (!RATE[division]) RATE[division] = [];
+            const a = RATE[division];
+            const now = Date.now();
+            while (a.length && now - a[0] > 60000) a.shift();
+            if (a.length < BUDGET) { a.push(now); return; }
+            const wait = 60000 - (now - a[0]) + 60;
+            await sleep(wait > 0 ? wait : 200);
+        }
+    }
+
     // A whole financial year of a division is read from Exact in seconds, and the
     // very same year is asked again every time the page is opened or an entity is
     // switched. The finished answer is therefore kept in memory for a while, so
@@ -67,6 +85,7 @@ module.exports = function (getToken) {
         let pages = 0;
         const cap = maxPages || 40;
         while (url && pages < cap) {
+            await slot(division);
             const r = await getWithRetry(url, h, 4);
             const d = r.data && r.data.d ? r.data.d : r.data;
             const part = d && d.results ? d.results : (Array.isArray(d) ? d : []);
@@ -245,7 +264,9 @@ module.exports = function (getToken) {
                     }
                 }
             }
-            for (let i = 0; i < nums.length; i += 20) { await grab(nums.slice(i, i + 20)); await sleep(120); }
+            // Sixty entries per request keeps the number of calls to Exact low, and the
+            // split on truncation above still guarantees a whole entry is never half read.
+            for (let i = 0; i < nums.length; i += 60) { await grab(nums.slice(i, i + 60)); await sleep(60); }
             // Second pass: an entry that still has no counter line is asked on its own, so a
             // paging problem can never be shown as if the bookkeeping were incomplete.
             const orphans = nums.filter(function (n) { return !counter[n] || !counter[n].length; });
