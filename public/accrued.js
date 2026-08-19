@@ -189,7 +189,7 @@
   // limit per division. Different entities can therefore be read side by side
   // without pushing that limit, while the years of one entity stay one after
   // the other. That is what turns twenty entities from minutes into seconds.
-  var LANES = 6;
+  var LANES = 4;
   async function run() {
     if (S.busy) return;
     S.busy = true;
@@ -206,6 +206,16 @@
     draw();
     var next = 0;
     var lastDraw = 0;
+    var misses = [];
+    function absorb(m, y, j) {
+      if (j.error) { misses.push([m, y]); S.errors.push(m[1] + ' ' + y + ': ' + j.error); return; }
+      ((S.view === 'summary' ? j.rows : j.lines) || []).forEach(function (l) {
+        l.entityCode = m[1];
+        l.entityName = m[3];
+        l.division = m[2];
+        if (S.view === 'summary') { S.srows.push(l); } else { S.rows.push(l); }
+      });
+    }
     function tick() {
       var now = Date.now();
       if (now - lastDraw < 400) return;
@@ -218,16 +228,7 @@
         for (var k = 0; k < ys.length; k++) {
           var j = (S.view === 'summary') ? await fetchSum(m[2], ys[k], fresh) : await fetchOne(m[2], ys[k], fresh);
           S.done++;
-          if (j.error) {
-            S.errors.push(m[1] + ' ' + ys[k] + ': ' + j.error);
-          } else {
-            ((S.view === 'summary' ? j.rows : j.lines) || []).forEach(function (l) {
-              l.entityCode = m[1];
-              l.entityName = m[3];
-              l.division = m[2];
-              if (S.view === 'summary') { S.srows.push(l); } else { S.rows.push(l); }
-            });
-          }
+          absorb(m, ys[k], j);
           setStatus('Loading ' + S.done + ' of ' + S.total + ' entity-years' + (S.errors.length ? ' - ' + S.errors.length + ' failed' : ''));
           tick();
         }
@@ -237,6 +238,19 @@
     var wide = Math.min(LANES, list.length);
     for (var q = 0; q < wide; q++) lanes.push(lane());
     await Promise.all(lanes);
+    // Exact can still refuse a request when one division was very busy. Whatever
+    // was refused is asked again on its own, calmly, so a whole run is never lost.
+    for (var round = 0; round < 2 && misses.length; round++) {
+      var again = misses.slice();
+      misses = [];
+      S.errors = [];
+      for (var z = 0; z < again.length; z++) {
+        setStatus('Asking Exact again for ' + (z + 1) + ' of ' + again.length + ' that were refused');
+        var mz = again[z][0], yz = again[z][1];
+        absorb(mz, yz, (S.view === 'summary') ? await fetchSum(mz[2], yz, 1) : await fetchOne(mz[2], yz, 1));
+        tick();
+      }
+    }
     S.busy = false;
     setStatus('');
     draw();
