@@ -145,7 +145,123 @@ module.exports = function (getToken) {
         }
     });
 
-    router.get('/api/accrued/summary', async function (req, res) { const h = headers(); if (!h) return res.status(401).json({ error: 'Not authenticated' }); const division = req.query.division ? String(req.query.division) : null; const code = req.query.code ? String(req.query.code).trim() : '272200'; const year = req.query.year ? parseInt(String(req.query.year), 10) : null; if (!division) return res.status(400).json({ error: 'division is required' }); if (!year) return res.status(400).json({ error: 'year is required' }); try { const filter = 'FinancialYear eq ' + year + " and GLAccountCode ge '" + code + "' and GLAccountCode le '" + code + "zzzz'"; const raw = await fetchLines(division, filter, 'Date,EntryNumber', h); const base = raw.map(mapLine).filter(function (l) { return l.glCode === code; }); const ccOf = {}; const want = {}; const nums = []; base.forEach(function (l) { const k = String(l.entryNumber); if (!k) return; if (l.costCenter && !ccOf[k]) ccOf[k] = { c: l.costCenter, n: l.costCenterName }; if (!want[k]) { want[k] = 1; nums.push(k); } }); const out = []; const errs = []; async function grab(list) { if (!list.length) return; const f = 'FinancialYear eq ' + year + ' and (' + list.map(function (n) { return 'EntryNumber eq ' + n; }).join(' or ') + ')'; try { const lines = await fetchLines(division, f, 'EntryNumber', h); lines.map(mapLine).forEach(function (l) { if (l.glCode === code) return; const k = String(l.entryNumber); if (!want[k]) return; const cc = l.costCenter ? { c: l.costCenter, n: l.costCenterName } : (ccOf[k] || { c: '', n: '' }); out.push({ entryNumber: l.entryNumber, entryId: l.entryId, date: l.date, year: l.year, period: l.period, glCode: l.glCode, glDescription: l.glDescription, costCenter: cc.c, costCenterName: cc.n, description: l.description, debit: l.debit, credit: l.credit, amount: l.amount }); }); } catch (e) { if (list.length > 8) { const half = Math.ceil(list.length / 2); await grab(list.slice(0, half)); await grab(list.slice(half)); } else { errs.push('entries ' + list[0] + ' - ' + list[list.length - 1] + ': ' + e.message); } } } for (let i = 0; i < nums.length; i += 60) { await grab(nums.slice(i, i + 60)); await sleep(120); } res.json({ division: division, year: year, code: code, entries: nums.length, accrualLines: base.length, rows: out, chunkErrors: errs, lastUpdated: new Date().toISOString() }); } catch (e) { const status = (e.response && e.response.status) || 500; res.status(status === 401 ? 401 : 500).json({ error: 'Failed to load accrued summary', detail: e.message, status: status }); } }); router.get('/api/accrued/entry', async function (req, res) {
+    router.get('/api/accrued/summary', async function (req, res) {
+        const h = headers();
+        if (!h) return res.status(401).json({ error: 'Not authenticated' });
+        const division = req.query.division ? String(req.query.division) : null;
+        const code = req.query.code ? String(req.query.code).trim() : '272200';
+        const year = req.query.year ? parseInt(String(req.query.year), 10) : null;
+        if (!division) return res.status(400).json({ error: 'division is required' });
+        if (!year) return res.status(400).json({ error: 'year is required' });
+        try {
+            const filter = 'FinancialYear eq ' + year +
+                " and GLAccountCode ge '" + code + "' and GLAccountCode le '" + code + "zzzz'";
+            const raw = await fetchLines(division, filter, 'Date,EntryNumber', h);
+            const base = raw.map(mapLine).filter(function (l) { return l.glCode === code; });
+            const want = {};
+            const nums = [];
+            base.forEach(function (l) {
+                const k = String(l.entryNumber);
+                if (!k) return;
+                if (!want[k]) { want[k] = 1; nums.push(k); }
+            });
+            const counter = {};
+            const errs = [];
+            async function grab(list) {
+                if (!list.length) return;
+                const f = 'FinancialYear eq ' + year + ' and (' + list.map(function (n) { return 'EntryNumber eq ' + n; }).join(' or ') + ')';
+                try {
+                    const lines = await fetchLines(division, f, 'EntryNumber', h);
+                    lines.map(mapLine).forEach(function (l) {
+                        if (l.glCode === code) return;
+                        const k = String(l.entryNumber);
+                        if (!want[k]) return;
+                        if (!counter[k]) counter[k] = [];
+                        counter[k].push(l);
+                    });
+                } catch (e) {
+                    if (list.length > 8) {
+                        const half = Math.ceil(list.length / 2);
+                        await grab(list.slice(0, half));
+                        await grab(list.slice(half));
+                    } else {
+                        errs.push('entries ' + list[0] + ' - ' + list[list.length - 1] + ': ' + e.message);
+                    }
+                }
+            }
+            for (let i = 0; i < nums.length; i += 60) { await grab(nums.slice(i, i + 60)); await sleep(120); }
+
+            // The line on the accrual account itself is the truth: cost centre, period and
+            // amount are taken from it, so every cell of the dashboard ties back to the G/L
+            // account in Exact Online. The counter lines of the same entry only give the name
+            // of the expense account. A single journal entry can carry many accruals for
+            // different cost centres and periods, so the counter lines are matched on
+            // cost centre + period first, then cost centre, then period, and only after that
+            // spread pro rata over the remaining lines of the entry.
+            function pick(list, cc, per) {
+                const live = list.filter(function (l) { return Math.abs(l.amount) > 0.000001; });
+                let s = live.filter(function (l) { return (l.costCenter || '') === cc && String(l.period) === String(per); });
+                if (s.length) return s;
+                s = live.filter(function (l) { return (l.costCenter || '') === cc; });
+                if (s.length) return s;
+                s = live.filter(function (l) { return String(l.period) === String(per); });
+                if (s.length) return s;
+                return live;
+            }
+            const rows = [];
+            base.forEach(function (acc) {
+                const target = -acc.amount;
+                const cc = acc.costCenter || '';
+                const sel = pick(counter[String(acc.entryNumber)] || [], cc, acc.period);
+                if (!sel.length) {
+                    rows.push({
+                        entryNumber: acc.entryNumber, entryId: acc.entryId, date: acc.date,
+                        year: acc.year, period: acc.period, glCode: '', glDescription: '',
+                        costCenter: cc, costCenterName: acc.costCenterName,
+                        description: acc.description,
+                        debit: target > 0 ? target : 0, credit: target < 0 ? -target : 0, amount: target
+                    });
+                    return;
+                }
+                const tot = sel.reduce(function (s, l) { return s + Math.abs(l.amount); }, 0);
+                let used = 0;
+                sel.forEach(function (l, i) {
+                    const v = (i === sel.length - 1)
+                        ? Math.round((target - used) * 100) / 100
+                        : Math.round(target * Math.abs(l.amount) / tot * 100) / 100;
+                    used = Math.round((used + v) * 100) / 100;
+                    if (Math.abs(v) < 0.000001 && sel.length > 1) return;
+                    rows.push({
+                        entryNumber: acc.entryNumber, entryId: acc.entryId, date: acc.date,
+                        year: acc.year, period: acc.period,
+                        glCode: l.glCode, glDescription: l.glDescription,
+                        costCenter: cc, costCenterName: acc.costCenterName || l.costCenterName,
+                        description: l.description || acc.description,
+                        debit: v > 0 ? v : 0, credit: v < 0 ? -v : 0, amount: v
+                    });
+                });
+            });
+            res.json({
+                division: division,
+                year: year,
+                code: code,
+                entries: nums.length,
+                accrualLines: base.length,
+                rows: rows,
+                chunkErrors: errs,
+                lastUpdated: new Date().toISOString()
+            });
+        } catch (e) {
+            const status = (e.response && e.response.status) || 500;
+            res.status(status === 401 ? 401 : 500).json({
+                error: 'Failed to load accrued summary',
+                detail: e.message,
+                status: status
+            });
+        }
+    });
+
+    router.get('/api/accrued/entry', async function (req, res) {
         const h = headers();
         if (!h) return res.status(401).json({ error: 'Not authenticated' });
         const division = req.query.division ? String(req.query.division) : null;
