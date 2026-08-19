@@ -69,7 +69,7 @@ module.exports = function (getToken) {
                 const status = e.response && e.response.status;
                 if ((status === 429 || status === 503) && i < n - 1) {
                     const retryAfter = e.response.headers && e.response.headers['retry-after'];
-                    const wait = retryAfter ? Number(retryAfter) * 1000 : (900 * (i + 1));
+                    const wait = retryAfter ? Math.min(Number(retryAfter) * 1000, 20000) : (900 * (i + 1));
                     await sleep(wait);
                     continue;
                 }
@@ -167,6 +167,42 @@ module.exports = function (getToken) {
         const balance = debit - credit;
         return { debit: debit, credit: credit, balance: balance, balanced: Math.abs(balance) < 0.005, count: lines.length };
     }
+    // The accrual accounts Numa uses. Not every entity keeps all of them, so the
+    // dashboard asks Exact which ones exist in that division and offers only those.
+    const ACCRUAL_CODES = ['251150', '270100', '270200', '271500', '271600', '271900', '272200', '272203', '272205'];
+
+    router.get('/api/accrued/accounts', async function (req, res) {
+        const h = headers();
+        if (!h) return res.status(401).json({ error: 'Not authenticated' });
+        const division = req.query.division ? String(req.query.division) : null;
+        if (!division) return res.status(400).json({ error: 'division is required' });
+        const fresh = String(req.query.fresh || '') === '1';
+        const ckey = 'acc|' + division;
+        const hit = cacheGet(ckey, fresh);
+        if (hit) return res.json(hit);
+        try {
+            const path = 'financial/GLAccounts?$select=Code,Description&$filter=' +
+                "Code ge '251000' and Code le '273000'";
+            const rows = await fetchAll(division, path, h, 40);
+            const seen = {};
+            const out = [];
+            rows.forEach(function (g) {
+                const c = String(g.Code || '').trim();
+                if (ACCRUAL_CODES.indexOf(c) < 0 || seen[c]) return;
+                seen[c] = 1;
+                out.push({ code: c, description: String(g.Description || '').trim() });
+            });
+            out.sort(function (a, b) { return a.code < b.code ? -1 : 1; });
+            return sendCached(res, ckey, { division: division, accounts: out, lastUpdated: new Date().toISOString() });
+        } catch (e) {
+            const status = (e.response && e.response.status) || 500;
+            return res.status(status).json({
+                error: 'Failed to load the accrual accounts of this entity',
+                detail: (e.response && e.response.data) ? String(e.response.data).slice(0, 400) : e.message
+            });
+        }
+    });
+
     router.get('/api/accrued/transactions', async function (req, res) {
         const h = headers();
         if (!h) return res.status(401).json({ error: 'Not authenticated' });
