@@ -77,28 +77,28 @@
       if (a >= 0 && b > a) document.head.insertAdjacentHTML('beforeend', t.slice(a, b + 8));
     } catch (e) { }
     var extra = '<style>' +
-      '.pcard{background:#111827;border:1px solid #1f2937;border-radius:10px;padding:12px 14px;margin:14px 0}' +
-      '.pcard h3{margin:0 0 8px 0;font-size:13px;letter-spacing:.08em;text-transform:uppercase;color:#9ca3af}' +
+      '.pcard{background:#fdeaf3;border:1px solid #f3d5e4;border-radius:10px;padding:12px 14px;margin:14px 0}' +
+      '.pcard h3{margin:0 0 8px 0;font-size:13px;letter-spacing:.08em;text-transform:uppercase;color:#8a6e7d}' +
       '.jtab{width:100%;border-collapse:collapse;font-size:13px}' +
-      '.jtab th{text-align:left;color:#9ca3af;font-weight:600;padding:4px 8px;border-bottom:1px solid #1f2937}' +
-      '.jtab td{padding:4px 8px;border-bottom:1px solid #111827}' +
+      '.jtab th{text-align:left;color:#8a6e7d;font-weight:600;padding:4px 8px;border-bottom:1px solid #f3d5e4}' +
+      '.jtab td{padding:4px 8px;border-bottom:1px solid #fdeaf3}' +
       '.jtab td.r,.jtab th.r{text-align:right}' +
-      '.tag{display:inline-block;padding:1px 7px;border-radius:999px;font-size:11px;border:1px solid #1f2937}' +
-      '.tag.ok{color:#34d399;border-color:#065f46}' +
-      '.tag.man{color:#fbbf24;border-color:#78350f}' +
-      '.warn{color:#fbbf24}' +
-      '.muted{color:#9ca3af}' +
+      '.tag{display:inline-block;padding:1px 7px;border-radius:999px;font-size:11px;border:1px solid #f3d5e4}' +
+      '.tag.ok{color:#0f9d76;border-color:#8fd8b4}' +
+      '.tag.man{color:#b45309;border-color:#e6b56a}' +
+      '.warn{color:#b45309}' +
+      '.muted{color:#8a6e7d}' +
       '.gbar{display:flex;align-items:center;gap:8px;margin:0 0 8px 0}' +
-      '.grp{border:1px solid #1f2937;border-radius:10px;margin-bottom:8px;overflow:hidden}' +
-      '.ghead{display:flex;align-items:center;gap:10px;padding:10px 12px;background:#111827;cursor:pointer}' +
-      '.ghead:hover{background:#162032}' +
-      '.ghead .arw{width:14px;color:#9ca3af}' +
+      '.grp{border:1px solid #f3d5e4;border-radius:10px;margin-bottom:8px;overflow:hidden}' +
+      '.ghead{display:flex;align-items:center;gap:10px;padding:10px 12px;background:#fdeaf3;cursor:pointer}' +
+      '.ghead:hover{background:#fce3ef}' +
+      '.ghead .arw{width:14px;color:#8a6e7d}' +
       '.ghead .gcode{font-weight:700;min-width:90px}' +
-      '.ghead .gname{flex:1;color:#9ca3af;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}' +
+      '.ghead .gname{flex:1;color:#8a6e7d;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}' +
       '.ghead .gnum{min-width:130px;text-align:right}' +
       '.ghead .gpre{font-weight:700}' +
-      '.ghead.gtot{background:#0b1220;border:1px solid #1f2937;border-radius:10px;cursor:default;font-weight:700}' +
-      '.gbody{padding:6px 10px 10px 10px;background:#0b1220}' +
+      '.ghead.gtot{background:#fff2f8;border:1px solid #f3d5e4;border-radius:10px;cursor:default;font-weight:700}' +
+      '.gbody{padding:6px 10px 10px 10px;background:#fff2f8}' +
       '.ctl input[type=date],.ctl input[type=text],.ctl select{min-width:150px}' +
       '</style>';
     document.head.insertAdjacentHTML('beforeend', extra);
@@ -340,7 +340,7 @@
     if (!w) return;
     var y = Number(S.year) || 0;
     if (S.err) {
-      w.innerHTML = '<div class="state" style="color:#f87171">' + esc(S.err) + '</div>';
+      w.innerHTML = '<div class="state" style="color:#d92d20">' + esc(S.err) + '</div>';
       leftBox(); note(); return;
     }
     if (!S.data) {
