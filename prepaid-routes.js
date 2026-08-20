@@ -201,31 +201,98 @@ module.exports = function (getToken) {
 
     // The same invoice can be booked in the automatic journal and again by hand.
     // Only one amount per invoice survives, the reference journal wins.
+    // Journal 91 is never touched: every line of the automatic journal stays as
+    // it is. A line of a manual journal is only left out when the same invoice,
+    // or the same text with the same amount on the same day, is already counted.
+    // This is what stops the same invoice from being added twice.
+    function keysOf(l) {
+        const out = [];
+        const s = String(l.invoice || '').toLowerCase();
+        let ref = '';
+        for (let i = 0; i < s.length; i++) {
+            const c = s.charAt(i);
+            if ((c >= 'a' && c <= 'z') || isDigit(c)) ref = ref + c;
+        }
+        const amt = r2(l.amount).toFixed(2);
+        if (ref) out.push('i|' + ref + '|' + amt);
+        const dt = exactDate(l.date);
+        out.push('t|' + String(l.description || '').toLowerCase().slice(0, 60) + '|' + amt + '|' + (dt ? dt.t : ''));
+        return out;
+    }
+
     function dedupe(rows, prefer) {
         const pref = txt(prefer) || REF_JOURNAL;
-        const order = rows.slice().sort(function (a, b) {
-            const pa = a.journalCode === pref ? 0 : 1;
-            const pb = b.journalCode === pref ? 0 : 1;
-            if (pa !== pb) return pa - pb;
-            if (a.journalCode !== b.journalCode) return a.journalCode < b.journalCode ? -1 : 1;
-            return (a.entryNumber || 0) - (b.entryNumber || 0);
-        });
         const seen = {};
         const kept = [];
         const dropped = [];
-        order.forEach(function (l) {
-            const k = dupKey(l.invoice, l.amount, l.description, exactDate(l.date));
-            if (seen[k]) {
+        const ref = rows.filter(function (l) { return l.journalCode === pref; });
+        const rest = rows.filter(function (l) { return l.journalCode !== pref; });
+        ref.forEach(function (l) {
+            keysOf(l).forEach(function (k) { if (!seen[k]) seen[k] = l.journalCode || '-'; });
+            kept.push(l);
+        });
+        rest.sort(function (a, b) {
+            if (a.journalCode !== b.journalCode) return a.journalCode < b.journalCode ? -1 : 1;
+            return (a.entryNumber || 0) - (b.entryNumber || 0);
+        });
+        rest.forEach(function (l) {
+            const ks = keysOf(l);
+            let hit = null;
+            ks.forEach(function (k) { if (!hit && seen[k]) hit = seen[k]; });
+            if (hit) {
                 dropped.push({
-                    invoice: l.invoice, journal: l.journalCode, keptInJournal: seen[k],
+                    invoice: l.invoice, journal: l.journalCode, keptInJournal: hit,
                     amount: r2(l.amount), description: l.description
                 });
                 return;
             }
-            seen[k] = l.journalCode || '-';
+            ks.forEach(function (k) { seen[k] = l.journalCode || '-'; });
             kept.push(l);
         });
         return { kept: kept, dropped: dropped };
+    }
+
+    // The invoice number and the expense account do not stand on the prepaid
+    // line itself but on the other lines of the same entry. They are read per
+    // journal with the entry numbers that are really needed, so this stays a
+    // small extra question to Exact.
+    async function counterLines(division, year, rows, h, code) {
+        const spans = {};
+        rows.forEach(function (l) {
+            const n = Number(l.entryNumber) || 0;
+            if (!n) return;
+            const j = l.journalCode || '-';
+            if (!spans[j]) spans[j] = { min: n, max: n };
+            if (n < spans[j].min) spans[j].min = n;
+            if (n > spans[j].max) spans[j].max = n;
+        });
+        const sel = 'EntryNumber,GLAccountCode,GLAccountDescription,AmountDC,CostCenter,CostCenterDescription,CostUnit,CostUnitDescription,YourRef,InvoiceNumber,AccountName';
+        const out = {};
+        const keys = Object.keys(spans);
+        for (let i = 0; i < keys.length; i++) {
+            const s = spans[keys[i]];
+            const f = 'FinancialYear eq ' + year + ' and EntryNumber ge ' + s.min + ' and EntryNumber le ' + s.max;
+            const rs = await fetchAll(division, 'bulk/Financial/TransactionLines?$select=' + sel + '&$filter=' + f, h, 60);
+            rs.forEach(function (r) {
+                const n = Number(r.EntryNumber) || 0;
+                if (!n) return;
+                if (!out[n]) out[n] = { invoice: '', account: '', accountName: '', cost: '', costName: '', best: 0 };
+                const e = out[n];
+                if (!e.invoice) e.invoice = txt(r.YourRef) || (r.InvoiceNumber ? txt(r.InvoiceNumber) : '');
+                const gl = txt(r.GLAccountCode);
+                if (!gl || gl === code) return;
+                const first = gl.charAt(0);
+                if (first !== '4' && first !== '5' && first !== '6' && first !== '7') return;
+                const a = Math.abs(Number(r.AmountDC) || 0);
+                if (a <= e.best) return;
+                e.best = a;
+                e.account = gl;
+                e.accountName = txt(r.GLAccountDescription);
+                e.cost = txt(r.CostCenter);
+                e.costName = txt(r.CostCenterDescription);
+            });
+        }
+        return out;
     }
 
     // The prepaid accounts that the chosen entity really has in Exact.
@@ -304,6 +371,13 @@ module.exports = function (getToken) {
             const credits = scope.filter(function (l) { return l.amount < 0; });
             const clean = dedupe(debits, (journal && journal !== 'all') ? journal : REF_JOURNAL);
 
+            let extra = {};
+            let extraFailed = false;
+            if (txt(req.query.counter) !== '0' && clean.kept.length) {
+                try { extra = await counterLines(division, year, clean.kept, h, code); }
+                catch (eC) { extraFailed = true; extra = {}; }
+            }
+
             let cut;
             if (until === 'today') {
                 const n = new Date();
@@ -323,11 +397,12 @@ module.exports = function (getToken) {
             });
             clean.kept.forEach(function (l) {
                 const dt = exactDate(l.date);
+                const x = extra[Number(l.entryNumber)] || {};
                 const p = period(l.description);
                 const base = {
                     date: dt ? dmy(dt.y, dt.m, dt.d) : '',
                     journal: l.journalCode,
-                    invoice: l.invoice,
+                    invoice: l.invoice || x.invoice || '',
                     description: l.description,
                     supplier: l.supplier,
                     amount: r2(l.amount)
@@ -346,13 +421,13 @@ module.exports = function (getToken) {
                     no: rows.length + 1,
                     date: base.date,
                     sort: dt ? dt.t : 0,
-                    cost: l.costCenter || l.costUnit || '',
-                    costName: l.costCenterName || l.costUnitName || '',
-                    acc: l.costUnit || l.glCode || '',
-                    accName: l.costUnitName || l.glDescription || '',
+                    cost: l.costCenter || x.cost || l.costUnit || '',
+                    costName: l.costCenterName || x.costName || l.costUnitName || '',
+                    acc: x.account || l.costUnit || l.glCode || '',
+                    accName: x.accountName || l.costUnitName || l.glDescription || '',
                     description: l.description,
                     supplier: l.supplier,
-                    invoice: l.invoice,
+                    invoice: l.invoice || x.invoice || '',
                     journal: l.journalCode,
                     journalName: l.journalName,
                     entryNumber: l.entryNumber,
@@ -380,6 +455,7 @@ module.exports = function (getToken) {
                 journal: journal || 'all', mode: mode, until: until,
                 cut: dmy(cut.y, cut.m, 1),
                 referenceJournal: REF_JOURNAL,
+                counterFailed: extraFailed,
                 journals: journals,
                 rows: rows,
                 skipped: skipped,
