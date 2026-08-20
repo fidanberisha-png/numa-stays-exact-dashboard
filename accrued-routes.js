@@ -96,6 +96,10 @@ module.exports = function (getToken) {
                     };
                 }
                 const status = e.response && e.response.status;
+                                // The day budget of a division is gone: retrying only wastes
+                                // requests and hides the real reason, so give up right away.
+                                const dayLeft = e.rate ? Number(e.rate.remaining) : NaN;
+                                if (status === 429 && !isNaN(dayLeft) && dayLeft <= 0) { throw e; }
                 if ((status === 429 || status === 503) && i < n - 1) {
                     const retryAfter = e.response.headers && e.response.headers['retry-after'];
                     const wait = retryAfter ? Math.min(Number(retryAfter) * 1000, 20000) : (900 * (i + 1));
@@ -286,7 +290,7 @@ module.exports = function (getToken) {
         } catch (e) {
             const status = (e.response && e.response.status) || 500;
             const rl = askedTooMuch(e);
-            res.status(status === 401 ? 401 : 500).json({
+            res.status(status === 401 ? 401 : (rl ? 429 : 500)).json({
                 error: rl || 'Failed to load accrued transactions',
                 detail: e.message,
                 status: status
@@ -466,6 +470,7 @@ module.exports = function (getToken) {
                 code: code,
                 entries: nums.length,
                 accrualLines: base.length,
+                                accountTotals: totalsOf(base),
                 rows: outRows,
                 chunkErrors: errs,
                 lastUpdated: new Date().toISOString()
@@ -473,7 +478,7 @@ module.exports = function (getToken) {
         } catch (e) {
             const status = (e.response && e.response.status) || 500;
             const rl = askedTooMuch(e);
-            res.status(status === 401 ? 401 : 500).json({
+            res.status(status === 401 ? 401 : (rl ? 429 : 500)).json({
                 error: rl || 'Failed to load accrued summary',
                 detail: e.message,
                 status: status
