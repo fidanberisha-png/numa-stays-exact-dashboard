@@ -14,6 +14,7 @@ app.use(require('./exact-routes')(function () { return tokenData; }));
 app.use(require('./ageing-routes')(function () { return tokenData; }));
 app.use(require('./gl-balance-routes')(function () { return tokenData; }));
 app.use(require('./accrued-routes')(function () { return tokenData; }));
+app.use(require('./prepaid-routes')(function () { return tokenData; }));
 
 // Middleware
 app.use(cors());
@@ -39,6 +40,10 @@ app.use(express.static('public'));
 // Accrued dashboard page
 app.get('/accrued', (req, res) => {
     res.sendFile(__dirname + '/public/accrued.html');
+});
+
+app.get('/prepaid', (req, res) => {
+    res.sendFile(__dirname + '/public/prepaid.html');
 });
 
 app.get('/', (req, res) => {
