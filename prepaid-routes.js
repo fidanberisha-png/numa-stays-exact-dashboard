@@ -241,8 +241,7 @@ module.exports = function (getToken) {
     }
 
     // The same invoice can be written twice, in the same journal or in another
-    // one. It is marked here and shown, it is only left out when it is asked
-    // for, so the choice stays with the person who reads the dashboard.
+    // one. The repeat is always left out, so one invoice is counted one time.
     function findDoubles(rows) {
         const seen = {};
         const doubles = [];
@@ -383,9 +382,8 @@ module.exports = function (getToken) {
             const credits = scope.filter(function (l) { return l.amount < 0; });
             const grouped = groupEntries(debits);
             const doubles = findDoubles(grouped);
-            const skipDoubles = txt(req.query.skipDoubles) === '1';
             const clean = {
-                kept: skipDoubles ? grouped.filter(function (l) { return !l.doubleOf; }) : grouped,
+                kept: grouped.filter(function (l) { return !l.doubleOf; }),
                 dropped: doubles
             };
 
@@ -437,7 +435,6 @@ module.exports = function (getToken) {
                 const expensed = r2(monthly * used);
                 rows.push({
                     no: rows.length + 1,
-                    double: l.doubleOf ? String(l.doubleOf) : '',
                     merged: l.merged || 1,
                     date: base.date,
                     sort: dt ? dt.t : 0,
@@ -476,11 +473,9 @@ module.exports = function (getToken) {
                 cut: dmy(cut.y, cut.m, 1),
                 referenceJournal: REF_JOURNAL,
                 counterFailed: extraFailed,
-                doublesShown: !skipDoubles,
                 journals: journals,
                 rows: rows,
                 skipped: skipped,
-                duplicates: clean.dropped,
                 totals: {
                     count: rows.length,
                     amount: r2(tAmount),
@@ -488,10 +483,7 @@ module.exports = function (getToken) {
                     prepaid: r2(tPrepaid),
                     released: r2(released),
                     skipped: r2(tSkipped),
-                    skippedCount: skipped.length,
-                    doubles: clean.dropped.length,
-                    duplicates: clean.dropped.length,
-                    duplicateAmount: r2(clean.dropped.reduce(function (s, d) { return s + d.amount; }, 0))
+                    skippedCount: skipped.length
                 },
                 lastUpdated: new Date().toISOString()
             }));
