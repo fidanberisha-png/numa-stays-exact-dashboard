@@ -11,10 +11,9 @@ const BASE = 'https://start.exactonline.' + REGION + '/api/v1';
 const TTL = 10 * 60 * 1000;
 const cache = {};
 
-// Journal 91 is the automatic journal, nothing is typed into it by hand, so it
-// is the reference. The other journals are manual and the same invoice can sit
-// in more than one of them. Only one amount per invoice is kept, otherwise the
-// prepaid total is counted twice.
+// Journal 91 was used as the example of how a prepayment is written down. All
+// journals are read the same way and none of them is treated differently: they
+// all end up in one and the same list.
 const REF_JOURNAL = '91';
 
 function cacheGet(key, fresh) {
@@ -205,51 +204,64 @@ module.exports = function (getToken) {
     // it is. A line of a manual journal is only left out when the same invoice,
     // or the same text with the same amount on the same day, is already counted.
     // This is what stops the same invoice from being added twice.
-    function keysOf(l) {
-        const out = [];
-        const s = String(l.invoice || '').toLowerCase();
-        let ref = '';
+    // Every journal is treated in exactly the same way. Journal 91 was only the
+    // example of how a prepayment is written, the same reading is used for all
+    // of them, so nothing is filtered out because of the journal it sits in.
+    function cleanRef(v) {
+        const s = String(v || '').toLowerCase();
+        let out = '';
         for (let i = 0; i < s.length; i++) {
             const c = s.charAt(i);
-            if ((c >= 'a' && c <= 'z') || isDigit(c)) ref = ref + c;
+            if ((c >= 'a' && c <= 'z') || isDigit(c)) out = out + c;
         }
-        const amt = r2(l.amount).toFixed(2);
-        if (ref) out.push('i|' + ref + '|' + amt);
-        const dt = exactDate(l.date);
-        out.push('t|' + String(l.description || '').toLowerCase().slice(0, 60) + '|' + amt + '|' + (dt ? dt.t : ''));
         return out;
     }
 
-    function dedupe(rows, prefer) {
-        const pref = txt(prefer) || REF_JOURNAL;
+    // The lines of one entry that carry the same text are one and the same
+    // invoice, so they become one row with one amount. Nothing is summed twice
+    // and no line disappears.
+    function groupEntries(rows) {
+        const map = {};
+        const order = [];
+        rows.forEach(function (l) {
+            const k = (l.journalCode || '-') + '|' + (l.entryNumber || 0) + '|' +
+                String(l.description || '').toLowerCase() + '|' + cleanRef(l.invoice);
+            if (!map[k]) { map[k] = { line: l, amount: 0, count: 0 }; order.push(k); }
+            map[k].amount += l.amount;
+            map[k].count += 1;
+        });
+        return order.map(function (k) {
+            const g = map[k];
+            const l = {};
+            Object.keys(g.line).forEach(function (p) { l[p] = g.line[p]; });
+            l.amount = r2(g.amount);
+            l.merged = g.count;
+            return l;
+        });
+    }
+
+    // The same invoice can be written twice, in the same journal or in another
+    // one. It is marked here and shown, it is only left out when it is asked
+    // for, so the choice stays with the person who reads the dashboard.
+    function findDoubles(rows) {
         const seen = {};
-        const kept = [];
-        const dropped = [];
-        const ref = rows.filter(function (l) { return l.journalCode === pref; });
-        const rest = rows.filter(function (l) { return l.journalCode !== pref; });
-        ref.forEach(function (l) {
-            keysOf(l).forEach(function (k) { if (!seen[k]) seen[k] = l.journalCode || '-'; });
-            kept.push(l);
-        });
-        rest.sort(function (a, b) {
-            if (a.journalCode !== b.journalCode) return a.journalCode < b.journalCode ? -1 : 1;
-            return (a.entryNumber || 0) - (b.entryNumber || 0);
-        });
-        rest.forEach(function (l) {
-            const ks = keysOf(l);
-            let hit = null;
-            ks.forEach(function (k) { if (!hit && seen[k]) hit = seen[k]; });
-            if (hit) {
-                dropped.push({
-                    invoice: l.invoice, journal: l.journalCode, keptInJournal: hit,
-                    amount: r2(l.amount), description: l.description
+        const doubles = [];
+        rows.forEach(function (l) {
+            const ref = cleanRef(l.invoice);
+            const amt = r2(l.amount).toFixed(2);
+            const dt = exactDate(l.date);
+            const k = (ref ? 'i|' + ref : 't|' + String(l.description || '').toLowerCase().slice(0, 60) + '|' + (dt ? dt.t : '')) + '|' + amt;
+            if (seen[k]) {
+                l.doubleOf = seen[k];
+                doubles.push({
+                    invoice: l.invoice, journal: l.journalCode, entry: l.entryNumber,
+                    firstSeen: seen[k], amount: r2(l.amount), description: l.description
                 });
                 return;
             }
-            ks.forEach(function (k) { seen[k] = l.journalCode || '-'; });
-            kept.push(l);
+            seen[k] = (l.journalCode || '-') + ' / ' + (l.entryNumber || '');
         });
-        return { kept: kept, dropped: dropped };
+        return doubles;
     }
 
     // The invoice number and the expense account do not stand on the prepaid
@@ -361,7 +373,7 @@ module.exports = function (getToken) {
                 return {
                     code: j.code, description: j.description, count: j.count,
                     debit: r2(j.debit), credit: r2(j.credit), net: r2(j.debit - j.credit),
-                    automatic: j.code === REF_JOURNAL
+                    reference: j.code === REF_JOURNAL
                 };
             });
 
@@ -369,7 +381,13 @@ module.exports = function (getToken) {
             if (journal && journal !== 'all') scope = all.filter(function (l) { return l.journalCode === journal; });
             const debits = scope.filter(function (l) { return l.amount > 0; });
             const credits = scope.filter(function (l) { return l.amount < 0; });
-            const clean = dedupe(debits, (journal && journal !== 'all') ? journal : REF_JOURNAL);
+            const grouped = groupEntries(debits);
+            const doubles = findDoubles(grouped);
+            const skipDoubles = txt(req.query.skipDoubles) === '1';
+            const clean = {
+                kept: skipDoubles ? grouped.filter(function (l) { return !l.doubleOf; }) : grouped,
+                dropped: doubles
+            };
 
             let extra = {};
             let extraFailed = false;
@@ -419,6 +437,8 @@ module.exports = function (getToken) {
                 const expensed = r2(monthly * used);
                 rows.push({
                     no: rows.length + 1,
+                    double: l.doubleOf ? String(l.doubleOf) : '',
+                    merged: l.merged || 1,
                     date: base.date,
                     sort: dt ? dt.t : 0,
                     cost: l.costCenter || x.cost || l.costUnit || '',
@@ -456,6 +476,7 @@ module.exports = function (getToken) {
                 cut: dmy(cut.y, cut.m, 1),
                 referenceJournal: REF_JOURNAL,
                 counterFailed: extraFailed,
+                doublesShown: !skipDoubles,
                 journals: journals,
                 rows: rows,
                 skipped: skipped,
@@ -468,6 +489,7 @@ module.exports = function (getToken) {
                     released: r2(released),
                     skipped: r2(tSkipped),
                     skippedCount: skipped.length,
+                    doubles: clean.dropped.length,
                     duplicates: clean.dropped.length,
                     duplicateAmount: r2(clean.dropped.reduce(function (s, d) { return s + d.amount; }, 0))
                 },
