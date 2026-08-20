@@ -8,9 +8,25 @@
   /* The look and feel is shared with the Accrued dashboard: prepaid.js copies the
      style block of /accrued.html at start up, so the header, the buttons and the
      tables stay identical on both pages and there is only one copy of the CSS. */
-  body { margin:0; background:#0b0f14; color:#e6edf3; font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Arial,sans-serif; }
-  .state { padding:40px 24px; color:#8b98a5; }
-</style>
+  body { margin:0; background:#fff7fb; color:#1f1220; font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Arial,sans-serif; }
+  .state { padding:40px 24px; color:#8a6e7d; }
+
+        /* Numa look: white page with the pink of the logo as the one accent colour. */
+        :root { --pink:#e6007e; --pink-soft:#fff2f8; --pink-line:#ffb3d9; }
+        body { background:#fff7fb; color:#1f1220; }
+        header { background:#ffffff; border-bottom:2px solid var(--pink); box-shadow:0 1px 3px rgba(230,0,126,.06); }
+        .brand { color:var(--pink); letter-spacing:.01em; }
+        h1 { color:#1f1220; }
+        .kpi, .wrap, .sumcard, .pcard { box-shadow:0 1px 3px rgba(230,0,126,.07); }
+        .kpi .v { color:#1f1220; }
+        .btn { box-shadow:0 1px 2px rgba(230,0,126,.25); }
+        .btn:hover { filter:brightness(1.06); }
+        .btn.sec:hover { border-color:var(--pink); color:var(--pink); }
+        .tab.on, .vtab.on { color:#ffffff; }
+        .tab:hover, .vtab:hover { border-color:var(--pink); color:var(--pink); }
+        input:focus, select:focus { outline:none; border-color:var(--pink); box-shadow:0 0 0 3px rgba(230,0,126,.12); }
+        ::selection { background:#ffd1e8; }
+        </style>
 </head>
 <body>
 <div class="state">Loading PrePaid dashboard</div>
