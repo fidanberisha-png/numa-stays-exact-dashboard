@@ -70,28 +70,28 @@ function updateKPIs(invoices) {
                               <div class="kpi-title">REVENUE YTD</div>
                               <div class="kpi-value">kr ${(totalRevenue / 1000000).toFixed(1)}M</div>
                               <div class="kpi-change up">▲ ${Math.random() * 15 + 5 | 0}% vs 2025</div>
-                              <div style="height: 3px; background: #00bfff; border-radius: 2px; margin-top: 15px;"></div>
+                              <div style="height: 3px; background: #e6007e; border-radius: 2px; margin-top: 15px;"></div>
                           `;
 
                           kpiCards[1].innerHTML = `
                               <div class="kpi-title">DIRECT COSTS YTD</div>
                               <div class="kpi-value">kr ${(totalCosts / 1000000).toFixed(1)}M</div>
                               <div class="kpi-change down">▼ ${Math.random() * 10 + 3 | 0}% vs 2025</div>
-                              <div style="height: 3px; background: #ff6b35; border-radius: 2px; margin-top: 15px;"></div>
+                              <div style="height: 3px; background: #e2611a; border-radius: 2px; margin-top: 15px;"></div>
                           `;
 
                           kpiCards[2].innerHTML = `
                               <div class="kpi-title">OPERATING RESULT</div>
                               <div class="kpi-value">kr ${(operatingResult / 1000000).toFixed(1)}M</div>
                               <div class="kpi-change up">▲ ${operatingMargin}% margin</div>
-                              <div style="height: 3px; background: #33d755; border-radius: 2px; margin-top: 15px;"></div>
+                              <div style="height: 3px; background: #12a150; border-radius: 2px; margin-top: 15px;"></div>
                           `;
 
                           kpiCards[3].innerHTML = `
                               <div class="kpi-title">PENDING INVOICES</div>
                               <div class="kpi-value">${totalInvoices - (invoices.filter(i => i.Status === 50).length)}</div>
-                              <div class="kpi-change" style="background: #333; color: #888;">Awaiting payment</div>
-                              <div style="height: 3px; background: #ff6b35; border-radius: 2px; margin-top: 15px;"></div>
+                              <div class="kpi-change" style="background: #f0dbe6; color: #7a6672;">Awaiting payment</div>
+                              <div style="height: 3px; background: #e2611a; border-radius: 2px; margin-top: 15px;"></div>
                           `;
                   }
 }
@@ -117,26 +117,26 @@ function updateCharts(invoices) {
                                 {
                                                       label: '2026 Revenue',
                                                       data: revenueData,
-                                                      backgroundColor: '#00bfff'
+                                                      backgroundColor: '#e6007e'
                                 },
                                 {
                                                       label: '2025 Revenue',
                                                       data: [2.8, 3.1, 3.5, 3.8, 4.2, 4.5, 4.8, 4.5],
-                                                                            backgroundColor: '#004d66'
+                                                                            backgroundColor: '#ffb3d9'
                                 },
                                 {
                                                       label: 'Direct Costs',
                                                       data: costData,
-                                                      backgroundColor: '#ff6b35'
+                                                      backgroundColor: '#e2611a'
                                 }
                                             ]
                 },
                           options: {
                                         responsive: true,
-                                        plugins: { legend: { labels: { color: '#888' } } },
+                                        plugins: { legend: { labels: { color: '#7a6672' } } },
                                                       scales: {
-                                                                        y: { ticks: { color: '#888' }, grid: { color: '#333' } },
-                                                                                          x: { ticks: { color: '#888' }, grid: { color: '#333' } }
+                                                                        y: { ticks: { color: '#7a6672' }, grid: { color: '#f0dbe6' } },
+                                                                                          x: { ticks: { color: '#7a6672' }, grid: { color: '#f0dbe6' } }
                                                       }
                           }
       });
@@ -173,9 +173,9 @@ function updateTables(invoices) {
                 const tbody = receivablesTable.querySelector('table tbody');
                 if (tbody) {
                               tbody.innerHTML = `
-                                                <tr><td style="color: #33d755;">Not yet due</td><td><div class="bar" style="width: 60%;"></div></td><td>kr ${(notDueAmount / 1000000).toFixed(2)}M</td></tr>
-                                                <tr><td style="color: #00bfff;">1 – 30 d</td><td><div class="bar" style="width: 25%;"></div></td><td>kr ${(days1to30Amount / 1000000).toFixed(2)}M</td></tr>
-                                                <tr><td style="color: #ffc107;">31 – 60 d</td><td><div class="bar" style="width: 10%;"></div></td><td>kr ${(days31to60Amount / 1000000).toFixed(2)}M</td></tr>
+                                                <tr><td style="color: #12a150;">Not yet due</td><td><div class="bar" style="width: 60%;"></div></td><td>kr ${(notDueAmount / 1000000).toFixed(2)}M</td></tr>
+                                                <tr><td style="color: #e6007e;">1 – 30 d</td><td><div class="bar" style="width: 25%;"></div></td><td>kr ${(days1to30Amount / 1000000).toFixed(2)}M</td></tr>
+                                                <tr><td style="color: #b45309;">31 – 60 d</td><td><div class="bar" style="width: 10%;"></div></td><td>kr ${(days31to60Amount / 1000000).toFixed(2)}M</td></tr>
                                             `;
                 }
       }
@@ -186,9 +186,9 @@ function updateTables(invoices) {
                 const tbody = payablesTable.querySelector('table tbody');
                 if (tbody) {
                               tbody.innerHTML = `
-                                                <tr><td style="color: #33d755;">Not yet due</td><td><div class="bar" style="width: 55%;"></div></td><td>kr ${(notDueAmount * 0.8 / 1000000).toFixed(2)}M</td></tr>
-                                                <tr><td style="color: #00bfff;">1 – 30 d</td><td><div class="bar" style="width: 28%;"></div></td><td>kr ${(days1to30Amount * 0.8 / 1000000).toFixed(2)}M</td></tr>
-                                                <tr><td style="color: #ffc107;">31 – 60 d</td><td><div class="bar" style="width: 10%;"></div></td><td>kr ${(days31to60Amount * 0.8 / 1000000).toFixed(2)}M</td></tr>
+                                                <tr><td style="color: #12a150;">Not yet due</td><td><div class="bar" style="width: 55%;"></div></td><td>kr ${(notDueAmount * 0.8 / 1000000).toFixed(2)}M</td></tr>
+                                                <tr><td style="color: #e6007e;">1 – 30 d</td><td><div class="bar" style="width: 28%;"></div></td><td>kr ${(days1to30Amount * 0.8 / 1000000).toFixed(2)}M</td></tr>
+                                                <tr><td style="color: #b45309;">31 – 60 d</td><td><div class="bar" style="width: 10%;"></div></td><td>kr ${(days31to60Amount * 0.8 / 1000000).toFixed(2)}M</td></tr>
                                             `;
                 }
       }
