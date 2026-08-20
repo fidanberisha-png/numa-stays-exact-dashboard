@@ -61,6 +61,10 @@ module.exports = function (getToken) {
                   let filter = "BalanceType eq '" + balanceType + "'";
                   if (codeFrom) filter += " and GLAccountCode ge '" + codeFrom + "'";
                   if (codeTo) filter += " and GLAccountCode le '" + codeTo + "'";
+                          const yFrom = req.query.yearFrom || req.query.year || null;
+                          const yTo = req.query.yearTo || req.query.year || null;
+                          if (yFrom) filter += ' and ReportingYear ge ' + Number(yFrom);
+                          if (yTo) filter += ' and ReportingYear le ' + Number(yTo);
                   const path = 'financial/ReportingBalance?$filter=' + filter + '&$select=GLAccountCode,GLAccountDescription,Amount';
                   const rows = await fetchAll(division, path, h, 60);
                   const sums = {};
@@ -70,7 +74,7 @@ module.exports = function (getToken) {
                             sums[code].amount += Number(r.Amount) || 0;
                   });
                   const accounts = Object.keys(sums).map(function (c) { return sums[c]; }).filter(function (a) { return Math.abs(a.amount) > 0.004; });
-                  res.json({ division: division, balanceType: balanceType, accounts: accounts, rowCount: rows.length, lastUpdated: new Date().toISOString() });
+                  res.json({ division: division, balanceType: balanceType, yearFrom: yFrom, yearTo: yTo, accounts: accounts, rowCount: rows.length, lastUpdated: new Date().toISOString() });
           } catch (e) {
                   const status = e.response && e.response.status;
                   const detail = e.response && e.response.data ? e.response.data : e.message;
