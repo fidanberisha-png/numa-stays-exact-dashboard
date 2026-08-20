@@ -33,7 +33,7 @@
 
   var S = {
     entity: '', year: '2025', journal: 'all', mode: 'period',
-    cut: 'year', cutDate: '', from: '', to: '', q: '', doubles: 'show',
+    cut: 'year', cutDate: '', from: '', to: '', q: '',
     open: {}, data: null, fresh: false, busy: false, err: ''
   };
 
@@ -99,7 +99,6 @@
       '.ghead .gpre{font-weight:700}' +
       '.ghead.gtot{background:#0b1220;border:1px solid #1f2937;border-radius:10px;cursor:default;font-weight:700}' +
       '.gbody{padding:6px 10px 10px 10px;background:#0b1220}' +
-      'tr.dbl td{color:#fbbf24}' +
       '.ctl input[type=date],.ctl input[type=text],.ctl select{min-width:150px}' +
       '</style>';
     document.head.insertAdjacentHTML('beforeend', extra);
@@ -142,7 +141,6 @@
       '<div class="ctl"><label for="cut">AMORTISED UNTIL</label><select id="cut"><option value="year">End of the financial year</option><option value="today">Today</option><option value="date">A date I choose</option></select></div>',
       '<div class="ctl" id="cutDateBox" style="display:none"><label for="cutDate">DATE</label><input id="cutDate" type="date"></div>',
       '<div class="ctl"><label for="mode">AMORTISATION STARTS</label><select id="mode"><option value="period">On the period in the text</option><option value="invoice">On the invoice month</option></select></div>',
-      '<div class="ctl"><label for="doubles">DOUBLE INVOICES</label><select id="doubles"><option value="show">Show them all</option><option value="skip">Leave the second one out</option></select></div>',
       '<div class="ctl"><label for="from">BOOKED FROM</label><input id="from" type="date"></div>',
       '<div class="ctl"><label for="to">BOOKED UNTIL</label><input id="to" type="date"></div>',
       '<div class="ctl grow"><label for="q">SEARCH</label><input id="q" type="text" placeholder="Description, invoice, supplier, cost centre or journal"></div>',
@@ -173,7 +171,6 @@
     };
     el('cutDate').onchange = function () { S.cutDate = this.value; if (S.entity && S.cutDate) run(); };
     el('mode').onchange = function () { S.mode = this.value; if (S.entity && S.data) run(); };
-    el('doubles').onchange = function () { S.doubles = this.value; if (S.entity && S.data) run(); };
     el('from').onchange = function () { S.from = this.value; draw(); };
     el('to').onchange = function () { S.to = this.value; draw(); };
     el('q').oninput = function () { S.q = this.value; draw(); };
@@ -181,7 +178,7 @@
     el('refresh').onclick = function () { S.fresh = true; run(); };
     el('clear').onclick = function () {
       S.journal = 'all'; S.mode = 'period'; S.cut = 'year'; S.cutDate = ''; S.from = ''; S.to = ''; S.q = '';
-      S.doubles = 'show'; S.open = {}; if (el('doubles')) el('doubles').value = 'show';
+      S.open = {};
       el('journal').value = 'all'; el('mode').value = 'period'; el('cut').value = 'year';
       el('cutDateBox').style.display = 'none'; el('cutDate').value = '';
       el('from').value = ''; el('to').value = ''; el('q').value = '';
@@ -232,7 +229,6 @@
       '&journal=' + encodeURIComponent(S.journal) +
       '&mode=' + encodeURIComponent(S.mode) +
       '&until=' + encodeURIComponent(until) +
-      (S.doubles === 'skip' ? '&skipDoubles=1' : '') +
       (S.fresh ? '&fresh=1' : '');
     try {
       var r = await fetch(url, { credentials: 'same-origin' });
@@ -304,14 +300,11 @@
     var y = Number(S.year) || 0;
     var rows = rowsNow();
     var t = sums(rows);
-    var dup = (S.data && S.data.totals) ? S.data.totals.duplicates : 0;
-    var dupAmt = (S.data && S.data.totals) ? S.data.totals.duplicateAmount : 0;
     box.innerHTML = [
-      kpi('INVOICES', n0(t.count), 'after the double bookings are left out'),
+      kpi('INVOICES', n0(t.count), 'one amount per invoice'),
       kpi('TOTAL PAID IN ADVANCE', eur(t.total), 'booked on ' + CODE + ' in ' + y),
       kpi('EXPENSED ' + y, eur(t.expensed), 'the months that are already used'),
-      kpi('PREPAID ' + (y + 1), eur(t.prepaid), 'still to be carried to ' + (y + 1)),
-      kpi('DOUBLE BOOKINGS LEFT OUT', n0(dup), dup ? eur(dupAmt) + ' not counted twice' : 'nothing was counted twice')
+      kpi('PREPAID ' + (y + 1), eur(t.prepaid), 'still to be carried to ' + (y + 1))
     ].join('');
   }
 
@@ -331,25 +324,11 @@
         '<td class="r">' + eur(j.net) + '</td>' +
         '</tr>';
     });
-    var dbl = (S.data && S.data.duplicates) ? S.data.duplicates : [];
-    var extra = '';
-    if (dbl.length) {
-      var lst = '';
-      dbl.slice(0, 25).forEach(function (d) {
-        lst += '<tr><td>' + esc(d.invoice || '-') + '</td><td>' + esc(d.description || '') + '</td>' +
-          '<td class="r">' + eur(d.amount) + '</td><td>' + esc(d.journal) + ' / ' + esc(d.entry) + '</td><td>' + esc(d.firstSeen) + '</td></tr>';
-      });
-      extra = '<h3 style="margin-top:14px" class="warn">The same invoice appears more than once (' + n0(dbl.length) + ')</h3>' +
-        '<table class="jtab"><thead><tr><th>Invoice</th><th>Description</th><th class="r">Amount</th><th>This entry</th><th>Already counted in</th></tr></thead><tbody>' +
-        lst + '</tbody></table>' +
-        (dbl.length > 25 ? '<div class="muted" style="margin-top:6px">and ' + n0(dbl.length - 25) + ' more</div>' : '') +
-        '<div class="muted" style="margin-top:6px">They are all in the list above. With DOUBLE INVOICES you decide whether the second one counts.</div>';
-    }
     box.innerHTML = '<div class="pcard"><h3>Journals on account ' + CODE + '</h3>' +
       '<table class="jtab"><thead><tr><th>Journal</th><th>Name</th><th class="r">Lines</th><th class="r">Debit</th><th class="r">Credit</th><th class="r">Net</th></tr></thead><tbody>' +
       body + '</tbody></table>' +
       '<div class="muted" style="margin-top:6px">Every journal is read in the same way and they all stand in the same list. Use the JOURNAL filter to look at one of them on its own.</div>' +
-      extra + '</div>';
+      '</div>';
   }
 
   // The rows are put together per account of the Accc column, closed by
@@ -444,7 +423,7 @@
       '<th>Journal</th></tr></thead>';
     var body = '';
     rows.forEach(function (r, i) {
-      body += '<tr' + (r.double ? ' class="dbl" title="The same invoice is also in ' + esc(r.double) + '"' : '') + '>' +
+      body += '<tr>' +
         '<td>' + (i + 1) + '</td>' +
         '<td>' + esc(r.date) + '</td>' +
         '<td title="' + esc(r.costName || '') + '">' + esc(r.cost || '') + '</td>' +
@@ -531,11 +510,10 @@
       '(1) every line of G/L account ' + CODE + ' of the chosen entity and financial year is read live from Exact Online, out of all journals together; ' +
       '(2) every journal is read in the same way, none of them is treated differently and nothing is left out because of the journal it stands in; ' +
       '(3) the lines of one entry that carry the same text belong to the same invoice, so they make one row with one amount and no amount is added twice; ' +
-      '(4) when the same invoice is written twice it is marked and shown under the journals, and it only stops counting when DOUBLE INVOICES is set to leave the second one out; ' +
-      '(5) the period comes from the text of the booking, for example (01-01-2026 - 31-12-2026), and the months are counted from the first to the last month, both included; ' +
-      '(6) the monthly amount is the invoice amount divided by those months and the months used are the months up to the cut off, that is the end of ' + y + ', today, or the date chosen above; ' +
-      '(7) expensed is the monthly amount times the months used and the prepaid amount is the invoice amount minus the expensed part, so a row always adds up to the amount that stands in Exact; ' +
-      '(8) amounts are never rounded up or down and never corrected, a line without a period is not guessed but shown apart at the bottom, and the credit lines (the releases) stay out of the schedule and are visible in the journal overview.';
+      '(4) the period comes from the text of the booking, for example (01-01-2026 - 31-12-2026), and the months are counted from the first to the last month, both included; ' +
+      '(5) the monthly amount is the invoice amount divided by those months and the months used are the months up to the cut off, that is the end of ' + y + ', today, or the date chosen above; ' +
+      '(6) expensed is the monthly amount times the months used and the prepaid amount is the invoice amount minus the expensed part, so a row always adds up to the amount that stands in Exact; ' +
+      '(7) amounts are never rounded up or down and never corrected, a line without a period is not guessed but shown apart at the bottom, and the credit lines (the releases) stay out of the schedule and are visible in the journal overview.';
     n.textContent = txt;
   }
 
