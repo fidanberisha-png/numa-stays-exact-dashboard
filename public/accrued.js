@@ -364,7 +364,7 @@
     });
     h += '</tbody><tfoot>';
     h += '<tr><td colspan="' + (cons ? 7 : 6) + '">Total of ' + rows.length + ' lines</td>' + (hasAcct ? '<td></td>' : '') + '<td class="num">' + eur(d) + '</td><td class="num">' + eur(c) + '</td></tr>';
-    h += '<tr><td colspan="' + (cons ? 7 : 6) + '">Net (Debit - Credit)</td>' + (hasAcct ? '<td></td>' : '') + '<td class="num" colspan="2" style="color:#8fd0ff">' + eur(bal) + '</td></tr>';
+    h += '<tr><td colspan="' + (cons ? 7 : 6) + '">Net (Debit - Credit)</td>' + (hasAcct ? '<td></td>' : '') + '<td class="num" colspan="2" style="color:#0f766e">' + eur(bal) + '</td></tr>';
     h += '</tfoot></table>';
     w.innerHTML = h; nsEnhance(w);
     var trs = w.querySelectorAll('tr.row');
@@ -387,7 +387,7 @@
     if (document.getElementById('nsInfoStyle')) return;
     var st = document.createElement('style');
     st.id = 'nsInfoStyle';
-    st.textContent = '.nsinfo{display:inline-flex;align-items:center;justify-content:center;width:15px;height:15px;border-radius:50%;border:1px solid currentColor;font-size:10px;font-weight:700;line-height:1;margin-left:8px;cursor:help;opacity:.75;vertical-align:middle;font-family:inherit;flex:0 0 auto}.nsinfo:hover{opacity:1}#nsTipBox{position:fixed;display:none;width:320px;padding:10px 12px;border-radius:8px;background:#0f1420;color:#e6edf7;border:1px solid #2a3343;font-size:11px;font-weight:700;line-height:1.55;letter-spacing:0;text-align:left;white-space:normal;z-index:9999;box-shadow:0 12px 28px rgba(0,0,0,.55)}';
+    st.textContent = '.nsinfo{display:inline-flex;align-items:center;justify-content:center;width:15px;height:15px;border-radius:50%;border:1px solid currentColor;font-size:10px;font-weight:700;line-height:1;margin-left:8px;cursor:help;opacity:.75;vertical-align:middle;font-family:inherit;flex:0 0 auto}.nsinfo:hover{opacity:1}#nsTipBox{position:fixed;display:none;width:320px;padding:10px 12px;border-radius:8px;background:#ffffff;color:#1f1220;border:1px solid #f2d9e6;font-size:11px;font-weight:700;line-height:1.55;letter-spacing:0;text-align:left;white-space:normal;z-index:9999;box-shadow:0 12px 28px rgba(0,0,0,.55)}';
     document.head.appendChild(st);
     var box = document.createElement('div');
     box.id = 'nsTipBox';
@@ -439,7 +439,7 @@
   function detailHtml(key) {
     var dt = S.det[key];
     if (!dt) return '<div class="dstate">Loading entry ...</div>';
-    if (dt.error) return '<div class="dstate" style="color:#ff5c5c">' + esc(dt.error) + '</div>';
+    if (dt.error) return '<div class="dstate" style="color:#d92d20">' + esc(dt.error) + '</div>';
     var lines = dt.lines || [];
     var h = '<div class="dhead">Entry number ' + esc(dt.entryNumber) + (dt.journal ? ' &middot; Journal ' + esc(dt.journal) : '') + (dt.year ? ' &middot; Financial year / Period ' + esc(dt.year) + ' - ' + esc(dt.period) : '') + '</div>';
     h += '<table class="inner"><thead><tr><th>No.</th><th>Date</th><th>G/L Account</th><th>Description</th><th class="num">Debit</th><th class="num">Credit</th></tr></thead><tbody>';
@@ -454,7 +454,7 @@
       h += '</tr>';
     });
     h += '</tbody><tfoot><tr><td colspan="4">Total</td><td class="num">' + eur(dt.totals.debit) + '</td><td class="num">' + eur(dt.totals.credit) + '</td></tr>';
-    h += '<tr><td colspan="4">Balance check</td><td colspan="2" class="num" style="color:' + (dt.totals.balanced ? '#33d755' : '#ffc107') + '">' + (dt.totals.balanced ? 'Debit = Credit \u2713' : 'Difference ' + eur(dt.totals.balance) + ' \u26a0') + '</td></tr>';
+    h += '<tr><td colspan="4">Balance check</td><td colspan="2" class="num" style="color:' + (dt.totals.balanced ? '#12a150' : '#b45309') + '">' + (dt.totals.balanced ? 'Debit = Credit \u2713' : 'Difference ' + eur(dt.totals.balance) + ' \u26a0') + '</td></tr>';
     h += '</tfoot></table>';
     return h;
   }
