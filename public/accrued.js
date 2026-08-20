@@ -222,7 +222,7 @@
     return { error: 'unknown' };
   }
 
-  async function fetchSum(div, year, fresh, code) { for (var a = 0; a < 2; a++) { try { var r = await fetch('/api/accrued/summary?division=' + div + '&year=' + year + '&code=' + encodeURIComponent(code || S.code) + (fresh ? '&fresh=1' : ''), { credentials: 'same-origin' }); var j = await r.json(); if (r.ok && j && !j.error) return j; if (r.status === 401) return { error: 'Not connected to Exact Online' }; if (a === 1) return { error: (j && (j.error || j.detail)) || ('HTTP ' + r.status) }; } catch (e) { if (a === 1) return { error: String(e) }; } await sleep(1500); } return { error: 'unknown' }; }
+  async function fetchSum(div, year, fresh, code) { for (var a = 0; a < 2; a++) { try { var r = await fetch('/api/accrued/summary?division=' + div + '&year=' + year + '&code=' + encodeURIComponent(code || S.code) + (fresh ? '&fresh=1' : ''), { credentials: 'same-origin' }); var j = await r.json(); if (r.ok && j && !j.error) return j; if (r.status === 401) return { error: 'Not connected to Exact Online' }; if (r.status === 429) return { error: (j && (j.error || j.detail)) || 'Exact Online has no requests left for this entity right now' }; if (a === 1) return { error: (j && (j.error || j.detail)) || ('HTTP ' + r.status) }; } catch (e) { if (a === 1) return { error: String(e) }; } await sleep(1500); } return { error: 'unknown' }; }
 
   // One entity is one division in Exact Online, and Exact counts its request
   // limit per division. Different entities can therefore be read side by side
@@ -235,7 +235,7 @@
     if (!S.entity) { S.busy = false; S.rows = []; S.srows = []; draw(); setStatus(''); return; } S.rows = []; S.srows = [];
     S.open = {};
     S.det = {};
-    S.errors = [];
+    S.errors = []; S.gross = { d: 0, c: 0 };
     var list = targets();
     var ys = years();
     var cs = codes();
@@ -253,7 +253,8 @@
     var lastDraw = 0;
     var misses = [];
     function absorb(m, y, c, j) {
-      if (j.error) { misses.push([m, y, c]); S.errors.push(m[1] + ' ' + y + ' ' + c + ': ' + j.error); return; }
+      if (j.error) { if (!/no requests left today|429/.test(String(j.error))) misses.push([m, y, c]); S.errors.push(m[1] + ' ' + y + ' ' + c + ': ' + j.error); return; }
+            if (j.accountTotals) { if (!S.gross) S.gross = { d: 0, c: 0 }; S.gross.d += (Number(j.accountTotals.debit) || 0); S.gross.c += (Number(j.accountTotals.credit) || 0); }
       ((S.view === 'summary' ? j.rows : j.lines) || []).forEach(function (l) {
         l.entityCode = m[1];
         l.entityName = m[3];
@@ -431,7 +432,7 @@
   function note() {
     var n = el('note');
     if (!n) return;
-    var t = (S.view === 'summary') ? 'Summary: every row is a cost centre, open it to see the G/L accounts inside. How the numbers are built: (1) all lines of the selected accrual account for the chosen financial years are read live from Exact Online; (2) the line on the accrual account is the anchor, so cost centre, period and amount are exactly what stands in Exact; (3) the name of the expense account comes from the other lines of the same journal entry, matched first on cost centre plus period, then on cost centre, then on period, and only after that spread pro rata; (4) the pieces are added up again per entry, cost centre, period and account, so the amounts never change; (5) every journal entry is read to its last page, and if the Exact paging is cut off it is reported as an error instead of dropping lines in silence. Nothing is recalculated, so the Grand Total matches the balance of the G/L account in Exact. Columns are financial periods, amounts are debit minus credit, and the search box filters by cost centre or G/L account. A row marked as no counter line or as cost centre missing has to be corrected in Exact, not here - hover the i for what to change.' : 'Click any row to open the full journal entry: G/L account, description, debit, credit and the entry total (balance check). Click a column header to sort, and use the search box to filter.';
+    var t = (S.view === 'summary') ? 'Summary: every row is a cost centre, open it to see the G/L accounts inside. How the numbers are built: (1) all lines of the selected accrual account for the chosen financial years are read live from Exact Online; (2) the line on the accrual account is the anchor, so cost centre, period and amount are exactly what stands in Exact; (3) the name of the expense account comes from the other lines of the same journal entry, matched first on cost centre plus period, then on cost centre, then on period, and only after that spread pro rata; (4) the pieces are added up again per entry, cost centre, period and account, so the amounts never change; (5) every journal entry is read to its last page, and if the Exact paging is cut off it is reported as an error instead of dropping lines in silence. Nothing is recalculated. The Grand Total is the movement of the periods shown, so it equals the balance of the G/L account in Exact only after the opening balance of the years before the first year shown is added. Columns are financial periods, amounts are debit minus credit, and the search box filters by cost centre or G/L account. A row marked as no counter line or as cost centre missing has to be corrected in Exact, not here - hover the i for what to change.' : 'Click any row to open the full journal entry: G/L account, description, debit, credit and the entry total (balance check). Click a column header to sort, and use the search box to filter.';
     if (S.errors.length) t += ' Errors: ' + S.errors.join(' | ');
     n.textContent = t;
   }
