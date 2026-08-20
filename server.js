@@ -57,9 +57,38 @@ const EXACT_TOKEN_URL = `https://start.exactonline.${EXACT_REGION}/api/oauth2/to
 const EXACT_API_BASE = `https://api.exactonline.com/${EXACT_REGION}/api/v1/`;
 
 // Token storage
-let tokenData = null;
+const TOKEN_FILE = process.env.TOKEN_FILE || '/tmp/exact-token.json';
+
+// The Exact token used to live only inside this process, so every restart or
+// idle spin-down of the instance logged the dashboard out and all reports came
+// back empty. The token is now also kept on disk and can be bootstrapped from
+// the EXACT_REFRESH_TOKEN environment variable after a fresh deploy.
+function saveToken() {
+        try {
+                    require('fs').writeFileSync(TOKEN_FILE, JSON.stringify(tokenData));
+        } catch (e) {
+                    console.error('Could not store the Exact token:', e.message);
+        }
+}
+
+function loadToken() {
+        try {
+                    const stored = JSON.parse(require('fs').readFileSync(TOKEN_FILE, 'utf8'));
+                    if (stored && stored.refresh_token) {
+                                    console.log('Exact token restored from disk');
+                                    return stored;
+                    }
+        } catch (e) { }
+        if (process.env.EXACT_REFRESH_TOKEN) {
+                    console.log('Exact token bootstrapped from EXACT_REFRESH_TOKEN');
+                    return { refresh_token: process.env.EXACT_REFRESH_TOKEN, access_token: '', expires_in: 600, created_at: 0 };
+        }
+        return null;
+}
+
+let tokenData = loadToken();
 let lastRefresh = Date.now();
-const REFRESH_INTERVAL = 5 * 60 * 1000;
+const REFRESH_INTERVAL = 60 * 1000;
 
 // ====================================
 // OAuth Routes
@@ -107,6 +136,7 @@ app.get('/auth/callback', async (req, res) => {
 
       tokenData = response.data;
                 tokenData.created_at = Date.now();
+                      saveToken();
                 req.session.authenticated = true;
                 req.session.save();
 
@@ -134,6 +164,7 @@ app.get('/auth/logout', (req, res) => {
 app.get('/api/status', (req, res) => {
     res.json({
           authenticated: !!tokenData,
+                    hasRefreshToken: !!(tokenData && tokenData.refresh_token),
           lastRefresh: lastRefresh,
           nextRefresh: lastRefresh + REFRESH_INTERVAL
     });
@@ -147,7 +178,7 @@ function isTokenExpired() {
     if (!tokenData) return false;
     const expiresIn = tokenData.expires_in * 1000;
     const createdAt = tokenData.created_at;
-    return (Date.now() - createdAt) > (expiresIn * 0.9);
+    return (Date.now() - createdAt) > (expiresIn * 0.6);
 }
 
 async function refreshToken() {
@@ -163,8 +194,14 @@ async function refreshToken() {
           tokenData.created_at = Date.now();
           lastRefresh = Date.now();
           console.log('Token refreshed successfully');
+                saveToken();
     } catch (error) {
           console.error('Token refresh failed:', error.message);
+                if (error.response && error.response.status === 400) {
+                                tokenData = null;
+                                saveToken();
+                                console.error('Exact refused the refresh token, press Connect Exact Online again');
+                }
     }
 }
 
@@ -173,6 +210,12 @@ setInterval(() => {
           refreshToken();
     }
 }, REFRESH_INTERVAL);
+
+// A token restored from disk has no usable access token any more, so refresh
+// it right away instead of waiting for the first report to fail.
+if (tokenData && tokenData.refresh_token) {
+        refreshToken();
+}
 
 // ====================================
 // Error Handling
@@ -191,3 +234,17 @@ app.listen(PORT, () => {
     console.log(`Server running on http://localhost:${PORT}`);
     console.log('Dashboard: http://localhost:' + PORT);
 });
+
+    // =========================================
+// Keep alive + token safety net
+// =========================================
+// The Exact token only lives in memory, so an idle spin-down or a restart of
+// this instance logs the dashboard out and every report then shows no data.
+// A small self ping keeps the instance awake and the token being refreshed.
+const SELF_URL = process.env.RENDER_EXTERNAL_URL || process.env.SELF_URL || '';
+if (SELF_URL) {
+        setInterval(function () {
+                    axios.get(SELF_URL + '/api/status').then(function () { }).catch(function () { });
+        }, 10 * 60 * 1000);
+}
+
