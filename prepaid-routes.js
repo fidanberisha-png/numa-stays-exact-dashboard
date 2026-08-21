@@ -245,8 +245,8 @@ module.exports = function (getToken) {
         });
     }
 
-    // The same invoice can be written twice, in the same journal or in another
-    // one. The repeat is always left out, so one invoice is counted one time.
+    // Two different invoices are never joined together, not even when they carry
+    // the same text, the same day and the same amount: both of them are added. Only the very same invoice number, written a second time in another entry, is left out once.
     function findDoubles(rows) {
         const seen = {};
         const doubles = [];
@@ -254,16 +254,17 @@ module.exports = function (getToken) {
             const ref = cleanRef(l.invoice);
             const amt = r2(l.amount).toFixed(2);
             const dt = exactDate(l.date);
-            const k = (ref ? 'i|' + ref : 't|' + String(l.description || '').toLowerCase().slice(0, 60) + '|' + (dt ? dt.t : '')) + '|' + amt;
-            if (seen[k]) {
-                l.doubleOf = seen[k];
+            if (!ref) return;
+            const k = 'i|' + ref + '|' + amt;
+            if (seen[k] && seen[k].entry !== (Number(l.entryNumber) || 0)) {
+                l.doubleOf = seen[k].where;
                 doubles.push({
                     invoice: l.invoice, journal: l.journalCode, entry: l.entryNumber,
-                    firstSeen: seen[k], amount: r2(l.amount), description: l.description
+                    firstSeen: seen[k].where, amount: r2(l.amount), description: l.description
                 });
                 return;
             }
-            seen[k] = (l.journalCode || '-') + ' / ' + (l.entryNumber || '');
+            if (!seen[k]) seen[k] = { where: (l.journalCode || '-') + ' / ' + (l.entryNumber || ''), entry: Number(l.entryNumber) || 0 };
         });
         return doubles;
     }
@@ -416,18 +417,26 @@ module.exports = function (getToken) {
             const debits = scope.filter(function (l) { return l.amount > 0; });
             const credits = scope.filter(function (l) { return l.amount < 0; });
             const grouped = groupEntries(debits);
+
+            // The invoice number does not stand on the prepaid line itself, it stands
+            // on the other lines of the same entry. It is read first, so the reading
+            // later on already knows the real invoice number of every line and two
+            // different invoices are never taken for one and the same invoice.
+            let extra = {};
+            let extraFailed = false;
+            if (txt(req.query.counter) !== '0' && grouped.length) {
+                try { extra = await counterLines(division, grouped, h, code); }
+                catch (eC) { extraFailed = true; extra = {}; }
+            }
+            grouped.forEach(function (l) {
+                const x = extra[Number(l.entryNumber)] || {};
+                if (!l.invoice && x.invoice) l.invoice = x.invoice;
+            });
             const doubles = findDoubles(grouped);
             const clean = {
                 kept: grouped.filter(function (l) { return !l.doubleOf; }),
                 dropped: doubles
             };
-
-            let extra = {};
-            let extraFailed = false;
-            if (txt(req.query.counter) !== '0' && clean.kept.length) {
-                try { extra = await counterLines(division, clean.kept, h, code); }
-                catch (eC) { extraFailed = true; extra = {}; }
-            }
 
             // With a blank financial year every year is read at once. The year the
             // schedule is counted against is then the last year Exact really holds.
