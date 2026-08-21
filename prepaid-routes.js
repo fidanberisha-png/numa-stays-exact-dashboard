@@ -267,13 +267,13 @@ module.exports = function (getToken) {
     // line itself but on the other lines of the same entry. They are read per
     // journal with the entry numbers that are really needed, so this stays a
     // small extra question to Exact.
-    async function counterLines(division, year, rows, h, code) {
+    async function counterLines(division, rows, h, code) {
         const spans = {};
         rows.forEach(function (l) {
             const n = Number(l.entryNumber) || 0;
             if (!n) return;
-            const j = l.journalCode || '-';
-            if (!spans[j]) spans[j] = { min: n, max: n };
+            const j = (l.journalCode || '-') + '|' + (Number(l.year) || 0);
+            if (!spans[j]) spans[j] = { min: n, max: n, year: Number(l.year) || 0 };
             if (n < spans[j].min) spans[j].min = n;
             if (n > spans[j].max) spans[j].max = n;
         });
@@ -282,7 +282,7 @@ module.exports = function (getToken) {
         const keys = Object.keys(spans);
         for (let i = 0; i < keys.length; i++) {
             const s = spans[keys[i]];
-            const f = 'FinancialYear eq ' + year + ' and EntryNumber ge ' + s.min + ' and EntryNumber le ' + s.max;
+            const f = (s.year ? 'FinancialYear eq ' + s.year + ' and ' : '') + 'EntryNumber ge ' + s.min + ' and EntryNumber le ' + s.max;
             const rs = await fetchAll(division, 'bulk/Financial/TransactionLines?$select=' + sel + '&$filter=' + f, h, 60);
             rs.forEach(function (r) {
                 const n = Number(r.EntryNumber) || 0;
@@ -304,6 +304,26 @@ module.exports = function (getToken) {
             });
         }
         return out;
+    }
+
+    // The opening balance of the account: everything that was booked on it in
+    // the years before the chosen financial year. It is only added up, never
+    // changed, so it stands next to the journals like in the report of Exact.
+    async function opening(division, code, year, h) {
+        const ckey = 'popen|' + division + '|' + code + '|' + year;
+        const hit = cacheGet(ckey, false);
+        if (hit !== null && hit !== undefined) return hit;
+        const f = 'FinancialYear lt ' + year +
+            " and GLAccountCode ge '" + code + "' and GLAccountCode le '" + code + "zzzz'";
+        let rows;
+        try {
+            rows = await fetchAll(division, 'bulk/Financial/TransactionLines?$select=AmountDC,FinancialYear&$filter=' + f, h, 200);
+        } catch (eA) {
+            rows = await lines(division, f, h);
+        }
+        let n = 0;
+        rows.forEach(function (r) { n += Number(r.AmountDC) || 0; });
+        return cacheSet(ckey, r2(n));
     }
 
     // The prepaid accounts that the chosen entity really has in Exact.
@@ -346,14 +366,14 @@ module.exports = function (getToken) {
         const mode = txt(req.query.mode) === 'invoice' ? 'invoice' : 'period';
         const until = txt(req.query.until) || 'year';
         if (!division) return res.status(400).json({ error: 'division is required' });
-        if (!year) return res.status(400).json({ error: 'year is required' });
+        // The financial year may stay blank: then every year is read at once.
         const fresh = String(req.query.fresh || '') === '1';
-        const ckey = 'psch|' + division + '|' + year + '|' + code + '|' + journal + '|' + mode + '|' + until;
+        const ckey = 'psch|' + division + '|' + (year || 'all') + '|' + code + '|' + journal + '|' + mode + '|' + until;
         const hit = cacheGet(ckey, fresh);
         if (hit) return res.json(hit);
         try {
-            const filter = 'FinancialYear eq ' + year +
-                " and GLAccountCode ge '" + code + "' and GLAccountCode le '" + code + "zzzz'";
+            const filter = (year ? 'FinancialYear eq ' + year + ' and ' : '') +
+                "GLAccountCode ge '" + code + "' and GLAccountCode le '" + code + "zzzz'";
             const raw = await lines(division, filter, h);
             const all = raw.map(mapLine).filter(function (l) { return l.amount !== 0; });
 
@@ -390,19 +410,27 @@ module.exports = function (getToken) {
             let extra = {};
             let extraFailed = false;
             if (txt(req.query.counter) !== '0' && clean.kept.length) {
-                try { extra = await counterLines(division, year, clean.kept, h, code); }
+                try { extra = await counterLines(division, clean.kept, h, code); }
                 catch (eC) { extraFailed = true; extra = {}; }
             }
 
+            // With a blank financial year every year is read at once. The year the
+            // schedule is counted against is then the last year Exact really holds.
+            let baseYear = year;
+            if (!baseYear) {
+                let mx = 0;
+                all.forEach(function (l) { const yy = Number(l.year) || 0; if (yy > mx) mx = yy; });
+                baseYear = mx || new Date().getUTCFullYear();
+            }
             let cut;
             if (until === 'today') {
                 const n = new Date();
                 cut = { y: n.getUTCFullYear(), m: n.getUTCMonth() + 1 };
             } else if (until !== 'year') {
                 const ds = findDates(until);
-                cut = ds.length ? { y: ds[0].y, m: ds[0].m } : { y: year, m: 12 };
+                cut = ds.length ? { y: ds[0].y, m: ds[0].m } : { y: baseYear, m: 12 };
             } else {
-                cut = { y: year, m: 12 };
+                cut = { y: baseYear, m: 12 };
             }
 
             const rows = [];
@@ -460,6 +488,31 @@ module.exports = function (getToken) {
                 });
             });
 
+            // The balance of the account, drawn like the journal report of Exact: the
+            // opening balance, then the journals, then the total and the closing
+            // balance. Nothing is recalculated, the lines are only added up.
+            let openNet = 0, openFailed = false;
+            if (year) {
+                try { openNet = await opening(division, code, year, h); }
+                catch (eO) { openFailed = true; openNet = 0; }
+            }
+            const bJournals = (journal && journal !== 'all')
+                ? journals.filter(function (j) { return j.code === journal; })
+                : journals;
+            let bDebit = 0, bCredit = 0;
+            bJournals.forEach(function (j) { bDebit += j.debit; bCredit += j.credit; });
+            const opDebit = openNet > 0 ? openNet : 0;
+            const opCredit = openNet < 0 ? -openNet : 0;
+            const closeNet = r2(openNet + bDebit - bCredit);
+            const balance = {
+                allYears: !year,
+                openingFailed: openFailed,
+                opening: { debit: r2(opDebit), credit: r2(opCredit), amount: r2(openNet) },
+                journals: bJournals,
+                total: { debit: r2(opDebit + bDebit), credit: r2(opCredit + bCredit), amount: closeNet },
+                closing: { debit: closeNet > 0 ? closeNet : 0, credit: closeNet < 0 ? -closeNet : 0, amount: closeNet }
+            };
+
             let tAmount = 0, tExpensed = 0, tPrepaid = 0;
             rows.forEach(function (r) { tAmount += r.total; tExpensed += r.expensed; tPrepaid += r.prepaid; });
             let released = 0;
@@ -473,6 +526,8 @@ module.exports = function (getToken) {
                 cut: dmy(cut.y, cut.m, 1),
                 referenceJournal: REF_JOURNAL,
                 counterFailed: extraFailed,
+                baseYear: baseYear,
+                balance: balance,
                 journals: journals,
                 rows: rows,
                 skipped: skipped,
@@ -502,14 +557,14 @@ module.exports = function (getToken) {
         const year = req.query.year ? parseInt(String(req.query.year), 10) : null;
         const journal = txt(req.query.journal);
         if (!division) return res.status(400).json({ error: 'division is required' });
-        if (!year) return res.status(400).json({ error: 'year is required' });
+        // The financial year may stay blank: then every year is read at once.
         const fresh = String(req.query.fresh || '') === '1';
-        const ckey = 'plin|' + division + '|' + year + '|' + code + '|' + journal;
+        const ckey = 'plin|' + division + '|' + (year || 'all') + '|' + code + '|' + journal;
         const hit = cacheGet(ckey, fresh);
         if (hit) return res.json(hit);
         try {
-            const filter = 'FinancialYear eq ' + year +
-                " and GLAccountCode ge '" + code + "' and GLAccountCode le '" + code + "zzzz'";
+            const filter = (year ? 'FinancialYear eq ' + year + ' and ' : '') +
+                "GLAccountCode ge '" + code + "' and GLAccountCode le '" + code + "zzzz'";
             const raw = await lines(division, filter, h);
             let out = raw.map(mapLine).filter(function (l) { return l.amount !== 0; });
             if (journal && journal !== 'all') out = out.filter(function (l) { return l.journalCode === journal; });
