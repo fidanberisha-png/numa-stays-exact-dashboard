@@ -425,8 +425,9 @@ setInterval(function () { conn(); load(); }, 300000);
       var u = new URL(url, location.origin), ep = u.pathname, date = u.searchParams.get('date'), rt = u.searchParams.get('referTo');
       return (async function () {
         var acc = [], T = { total: 0 }, n = 0, errs = [], per = [], BKZ = null;
-        for (var i = 0; i < ENT.length; i++) {
-          var m = ENT[i], j = await getOne(ep, m[2], date, rt), t = j.totals || {};
+        var LIST = pickedEnt();
+        for (var i = 0; i < LIST.length; i++) {
+          var m = LIST[i], j = await getOne(ep, m[2], date, rt), t = j.totals || {};
           if (!BKZ && j.buckets && j.buckets.length) { BKZ = j.buckets; }
           var kk = BKZ ? BKZ.map(function (b) { return b.key; }) : ['b1', 'b2', 'b3', 'b4'];
           kk.concat(['total']).forEach(function (k) { T[k] = (Number(T[k]) || 0) + (Number(t[k]) || 0); });
@@ -442,7 +443,7 @@ setInterval(function () { conn(); load(); }, 300000);
         window.NUMA_PER_ENTITY = per;
         LAST = { totals: T, accounts: acc };
         SIG = '';
-        return jr({ referTo: rt, referenceDate: date, division: ENT.length + ' selected entities (HQ/DACH/WEST/SOUTH)', consolidated: true, currency: 'EUR', source: 'Exact Online', buckets: BKZ, accounts: acc, totals: T, itemCount: n, errors: errs, lastUpdated: new Date().toISOString() });
+        return jr({ referTo: rt, referenceDate: date, division: LIST.length + (LIST.length === 1 ? ' selected entity' : ' selected entities'), consolidated: true, currency: 'EUR', source: 'Exact Online', buckets: BKZ, accounts: acc, totals: T, itemCount: n, errors: errs, lastUpdated: new Date().toISOString() });
       })();
     }
     var p = NF.call(window, input, init);
@@ -453,14 +454,95 @@ setInterval(function () { conn(); load(); }, 300000);
     }
     return p;
   };
+  // ---- Which entities go into the consolidated view ------------------------
+  // The entity box keeps the single entities, and next to it a tick list lets
+  // any mix of entities be chosen. The choice is remembered in this browser and
+  // everything else (KPI cards, tables, Excel and CSV) follows it.
+  var PICKKEY = 'numaEntPick';
+  function allCodes() { return ENT.map(function (m) { return String(m[2]); }); }
+  function getPick() {
+    var ok = allCodes();
+    try {
+      var raw = localStorage.getItem(PICKKEY);
+      if (!raw) { return ok; }
+      var list = JSON.parse(raw);
+      if (!list || !list.length) { return ok; }
+      list = list.map(String).filter(function (c) { return ok.indexOf(c) > -1; });
+      return list.length ? list : ok;
+    } catch (e) { return ok; }
+  }
+  function setPick(list) { try { localStorage.setItem(PICKKEY, JSON.stringify(list)); } catch (e) { } }
+  function pickedEnt() { var p = getPick(); return ENT.filter(function (m) { return p.indexOf(String(m[2])) > -1; }); }
+  function pickLabel() { var n = getPick().length; return 'Consolidated (' + n + (n === 1 ? ' selected entity)' : ' selected entities)'); }
+  function pickBtnLabel() { var n = getPick().length; return 'Entities: ' + n + ' of ' + ENT.length + ' \u25be'; }
+  function ensurePicker(sel) {
+    var old = document.getElementById('entPickBtn');
+    if (old) { old.textContent = pickBtnLabel(); return; }
+    var wrap = document.createElement('span');
+    wrap.id = 'entPickWrap';
+    wrap.style.cssText = 'position:relative;display:inline-block;margin-left:8px;vertical-align:middle;';
+    var btn = document.createElement('button');
+    btn.id = 'entPickBtn';
+    btn.type = 'button';
+    btn.textContent = pickBtnLabel();
+    btn.style.cssText = 'background:#fbcfd9;color:#1a1a18;border:1px solid #f4a9bd;border-radius:10px;padding:8px 14px;font:inherit;font-size:13px;font-weight:600;cursor:pointer;';
+    var pan = document.createElement('div');
+    pan.id = 'entPickPanel';
+    pan.style.cssText = 'display:none;position:absolute;z-index:80;top:118%;left:0;min-width:340px;max-height:62vh;overflow:auto;background:#fff;border:1px solid #f4a9bd;border-radius:14px;box-shadow:0 14px 36px rgba(26,26,24,.18);padding:14px;text-align:left;';
+    wrap.appendChild(btn);
+    wrap.appendChild(pan);
+    if (sel.parentNode) { sel.parentNode.insertBefore(wrap, sel.nextSibling); }
+    btn.onclick = function (ev) {
+      ev.stopPropagation();
+      if (pan.style.display === 'none') { drawPickPanel(pan); pan.style.display = 'block'; } else { pan.style.display = 'none'; }
+    };
+    document.addEventListener('click', function (ev) { if (!wrap.contains(ev.target)) { pan.style.display = 'none'; } });
+  }
+  function drawPickPanel(pan) {
+    var p = getPick();
+    var h = '<div style="font-size:11px;letter-spacing:.08em;color:#8a8a86;margin-bottom:6px;">ENTITIES IN THE CONSOLIDATED VIEW</div>';
+    ['HQ', 'DACH', 'WEST', 'SOUTH'].forEach(function (reg) {
+      var rows = ENT.filter(function (m) { return m[0] === reg; });
+      if (!rows.length) { return; }
+      h += '<div style="background:#fdeef2;border-radius:8px;padding:4px 8px;margin:10px 0 4px;font-weight:700;font-size:12px;">' + reg + '</div>';
+      rows.forEach(function (m) {
+        var on = p.indexOf(String(m[2])) > -1 ? ' checked' : '';
+        h += '<label style="display:block;padding:3px 4px;font-size:13px;cursor:pointer;"><input type="checkbox" class="entPick" value="' + m[2] + '"' + on + ' style="margin-right:8px;">' + esc(m[1] + ' - ' + m[3]) + '</label>';
+      });
+    });
+    h += '<div style="display:flex;gap:8px;align-items:center;margin-top:14px;border-top:1px solid #f6dde4;padding-top:12px;">';
+    h += '<button type="button" id="entAll" style="background:#fff;color:#1a1a18;border:1px solid #f4a9bd;border-radius:8px;padding:6px 12px;font:inherit;font-size:13px;cursor:pointer;">All</button>';
+    h += '<button type="button" id="entNone" style="background:#fff;color:#1a1a18;border:1px solid #f4a9bd;border-radius:8px;padding:6px 12px;font:inherit;font-size:13px;cursor:pointer;">None</button>';
+    h += '<button type="button" id="entApply" style="background:#e6007e;color:#fff;border:1px solid #e6007e;border-radius:8px;padding:6px 14px;font:inherit;font-size:13px;cursor:pointer;margin-left:auto;">Apply</button></div>';
+    pan.innerHTML = h;
+    function boxes() { return [].slice.call(pan.querySelectorAll('.entPick')); }
+    pan.querySelector('#entAll').onclick = function () { boxes().forEach(function (c) { c.checked = true; }); };
+    pan.querySelector('#entNone').onclick = function () { boxes().forEach(function (c) { c.checked = false; }); };
+    pan.querySelector('#entApply').onclick = function () {
+      var list = boxes().filter(function (c) { return c.checked; }).map(function (c) { return c.value; });
+      if (!list.length) { return; }
+      setPick(list);
+      pan.style.display = 'none';
+      var b = document.getElementById('entPickBtn');
+      if (b) { b.textContent = pickBtnLabel(); }
+      var sel = document.getElementById('company');
+      if (!sel) { return; }
+      var first = sel.querySelector('option[value="selected"]');
+      if (first) { first.text = pickLabel(); }
+      sel.value = 'selected';
+      if (sel.onchange) { sel.onchange(); }
+    };
+  }
   var ICENT = ENT.concat([['SOUTH', 711, 4166557, 'numa Lisbon South, unipessoal Lda']]); function fillSelect() {
     var sel = document.getElementById('company');
-    if (!sel || (sel.querySelector('option[value="selected"]') && sel.options.length === ENT.length + 1)) return;
+    if (!sel) { return; }
+    ensurePicker(sel);
+    if (sel.querySelector('option[value="selected"]') && sel.options.length === ENT.length + 1) { return; }
     var cur = sel.value;
     sel.innerHTML = '';
     var first = document.createElement('option');
     first.value = 'selected';
-    var __ds = document.getElementById('dashboard'); first.text = 'Consolidated (' + ((__ds && __ds.value === 'ic') ? ICENT.length : ENT.length) + ' selected entities)';
+    var __ds = document.getElementById('dashboard'); first.text = (__ds && __ds.value === 'ic') ? ('Consolidated (' + ICENT.length + ' selected entities)') : pickLabel();
     sel.appendChild(first);
     ['HQ', 'DACH', 'WEST', 'SOUTH'].forEach(function (reg) {
       var g = document.createElement('optgroup');
