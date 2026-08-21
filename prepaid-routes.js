@@ -16,6 +16,11 @@ const cache = {};
 // all end up in one and the same list.
 const REF_JOURNAL = '91';
 
+// With a blank financial year the dashboard never counts further than this
+// year, so the carry column never speaks of a year later than 2027 and the
+// page stays inside the years the filter itself offers.
+const LAST_YEAR = 2026;
+
 function cacheGet(key, fresh) {
     if (fresh) return null;
     const hit = cache[key];
@@ -431,6 +436,7 @@ module.exports = function (getToken) {
                 let mx = 0;
                 all.forEach(function (l) { const yy = Number(l.year) || 0; if (yy > mx) mx = yy; });
                 baseYear = mx || new Date().getUTCFullYear();
+                if (baseYear > LAST_YEAR) baseYear = LAST_YEAR;
             }
             let cut;
             if (until === 'today') {
