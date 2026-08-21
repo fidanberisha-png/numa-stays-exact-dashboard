@@ -75,16 +75,36 @@ function load() {
   fetch(url, { credentials: 'same-origin' }).then(function (r) {
     return r.json().then(function (j) { return { ok: r.ok, j: j }; });
   }).then(function (res) {
-    if (!res.ok || (res.j && res.j.error)) { fail(res.j); return; }
+    if (!res.ok && !(res.j && res.j.loading)) { fail(res.j); return; }
+    if (res.j && res.j.error) { fail(res.j); return; }
+    var busyNow = res.j && res.j.loading;
+    var hasRows = res.j && res.j.accounts && res.j.accounts.length;
+    if (busyNow && !hasRows) { waitScreen(res.j); return; }
     S.data = res.j;
     S.retried = 0;
     S.open = {};
     draw();
     stamp();
+    // A big entity like 900 has thousands of open invoices; Exact hands them out
+    // 60 at a time, so the rest keeps loading and the screen fills itself in.
+    if (S.poll) { clearTimeout(S.poll); S.poll = 0; }
+    if (busyNow) { S.poll = setTimeout(load, 8000); }
   }).catch(function (e) { fail({ error: String(e) }); });
 }
 function busy(j) {
   try { return JSON.stringify(j || {}).indexOf('429') >= 0; } catch (e) { return false; }
+}
+function waitScreen(j) {
+  var box = el('table');
+  box.className = 'state';
+  var n = (j.loading && j.loading.rows) || 0;
+  var ent = (j.loading && j.loading.entities) || 1;
+  box.innerHTML = 'Reading the open invoices from Exact Online: ' + esc(String(n)) + ' read so far'
+    + (ent > 1 ? ' in ' + esc(String(ent)) + ' entities' : '')
+    + '.<br>A large entity takes a few minutes the first time. This screen refreshes by itself.';
+  el('kpis').innerHTML = '';
+  if (S.poll) { clearTimeout(S.poll); }
+  S.poll = setTimeout(load, 6000);
 }
 function fail(j) {
   var box = el('table');
