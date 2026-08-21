@@ -8,24 +8,36 @@
   /* The look and feel is shared with the Accrued dashboard: prepaid.js copies the
      style block of /accrued.html at start up, so the header, the buttons and the
      tables stay identical on both pages and there is only one copy of the CSS. */
-  body { margin:0; background:#fff7fb; color:#1f1220; font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Arial,sans-serif; }
-  .state { padding:40px 24px; color:#8a6e7d; }
+  body { margin:0; background:#ffffff; color:#1a1a18; font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Arial,sans-serif; }
+  .state { padding:40px 24px; color:#6f6a6b; }
 
-        /* Numa look: white page with the pink of the logo as the one accent colour. */
-        :root { --pink:#e6007e; --pink-soft:#fff2f8; --pink-line:#ffb3d9; }
-        body { background:#fff7fb; color:#1f1220; }
-        header { background:#ffffff; border-bottom:2px solid var(--pink); box-shadow:0 1px 3px rgba(230,0,126,.06); }
-        .brand { color:var(--pink); letter-spacing:.01em; }
-        h1 { color:#1f1220; }
-        .kpi, .wrap, .sumcard, .pcard { box-shadow:0 1px 3px rgba(230,0,126,.07); }
-        .kpi .v { color:#1f1220; }
-        .btn { box-shadow:0 1px 2px rgba(230,0,126,.25); }
-        .btn:hover { filter:brightness(1.06); }
-        .btn.sec:hover { border-color:var(--pink); color:var(--pink); }
-        .tab.on, .vtab.on { color:#ffffff; }
-        .tab:hover, .vtab:hover { border-color:var(--pink); color:var(--pink); }
-        input:focus, select:focus { outline:none; border-color:var(--pink); box-shadow:0 0 0 3px rgba(230,0,126,.12); }
-        ::selection { background:#ffd1e8; }
+        /* Numa look: white page, the pink of the logo as the accent, the ink of the logo as the text. */
+        :root { --ink:#1a1a18; --pink:#fbcfd9; --pink-soft:#fdeaee; --pink-mid:#f19ab1; --pink-line:#f0d7de; }
+        body { background:#ffffff; color:var(--ink); }
+        header { background:#ffffff; border-bottom:3px solid var(--pink); }
+        .brand { color:var(--ink); background:var(--pink); padding:6px 13px; border-radius:8px; font-weight:800; letter-spacing:-.01em; }
+        h1 { color:var(--ink); }
+        .sub { color:#6f6a6b; }
+        .company { background:var(--pink-soft); border-color:var(--pink-line); color:var(--ink); }
+        .company:hover { border-color:var(--pink-mid); }
+        #dashboard { background-color:var(--pink); border-color:var(--pink-mid); color:var(--ink); }
+        .pill { background:#ffffff; border-color:var(--pink-line); color:#6f6a6b; }
+        .pill.ok { background:var(--pink-soft); border-color:var(--pink-mid); color:var(--ink); }
+        .btn { background:var(--pink); border:1px solid var(--pink-mid); color:var(--ink); font-weight:700; box-shadow:none; }
+        .btn:hover { background:var(--pink-mid); filter:none; }
+        .btn.sec { background:#ffffff; border:1px solid var(--pink-line); color:var(--ink); }
+        .btn.sec:hover { background:var(--pink-soft); border-color:var(--pink-mid); color:var(--ink); }
+        .kpi { background:#ffffff; border-left:3px solid var(--pink); box-shadow:0 1px 3px rgba(26,26,24,.06); }
+        .kpi .v { color:var(--ink); }
+        .wrap, .sumcard { background:#ffffff; box-shadow:0 1px 3px rgba(26,26,24,.06); }
+        .pcard { background:var(--pink-soft); border-color:var(--pink-line); box-shadow:0 1px 3px rgba(26,26,24,.06); }
+        thead th { background:var(--pink-soft); color:#6f6a6b; }
+        tfoot td { background:var(--pink-soft); }
+        .tab, .vtab { background:#ffffff; }
+        .tab.on, .vtab.on { background:var(--pink); border-color:var(--pink-mid); color:var(--ink); }
+        .tab:hover, .vtab:hover { border-color:var(--pink-mid); color:var(--ink); }
+        input:focus, select:focus { outline:none; border-color:var(--pink-mid); box-shadow:0 0 0 3px rgba(241,154,177,.30); }
+        ::selection { background:var(--pink); }
         </style>
 </head>
 <body>
