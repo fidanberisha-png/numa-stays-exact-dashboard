@@ -6,7 +6,12 @@ const express = require('express');
 const axios = require('axios');
 const REGION = process.env.EXACT_REGION || 'nl';
 const BASE = 'https://start.exactonline.' + REGION + '/api/v1';
-const AP_SOURCES = ['read/financial/AgingPayablesList', 'read/financial/PayablesList'];
+const AP_SOURCES = ['read/financial/PayablesList', 'read/financial/AgingPayablesList'];
+// The A/P report is cut in the same ranges as Exact shows them, the A/R report
+// keeps the four ranges it had. Only these two payable accounts are wanted.
+const AP_EDGES = [31, 61, 92, 180, 364, 730];
+const AR_EDGES = [30, 60, 90];
+const AP_GL = ['251100', '251150'];
 const AR_SOURCES = ['read/financial/AgingReceivablesList', 'read/financial/ReceivablesList'];
 
 // ---- Live EUR currency conversion -------------------------------------------
@@ -113,14 +118,41 @@ module.exports = function (getToken) {
     if (!base) return 0;
     return Math.floor((refDate.getTime() - base.getTime()) / 86400000);
   }
-  function accumulate(map, rows, referTo, refDate, currency, rates) {
+    // Every row falls in the bucket its age belongs to. The edges are given per
+  // report, so A/P can be cut in the fine ranges of Exact while A/R keeps its own.
+  function bucketOf(age, edges) {
+    for (let i = 0; i < edges.length; i++) { if (age <= edges[i]) return i; }
+    return edges.length;
+  }
+  function glOf(row) {
+    const fields = ['GLAccountCode', 'GLAccount', 'GLAccountCodeAP', 'AccountsPayableGLAccountCode', 'GLAccountCodeDescription'];
+    for (let i = 0; i < fields.length; i++) {
+      const v = row[fields[i]];
+      if (v !== undefined && v !== null && String(v).trim() !== '') return String(v).trim();
+    }
+    return null;
+  }
+  // Only the payable accounts that are really wanted are counted. When Exact
+  // does not put the account on the row nothing is thrown away.
+  function glWanted(row, allow) {
+    if (!allow || !allow.length) return true;
+    const gl = glOf(row);
+    if (!gl) return true;
+    for (let i = 0; i < allow.length; i++) { if (gl.indexOf(allow[i]) === 0) return true; }
+    return false;
+  }
+  function accumulate(map, rows, referTo, refDate, currency, rates, edges, allow, stats) {
+    const nb = edges.length + 1;
     rows.forEach(function (row) {
+      if (!glWanted(row, allow)) { if (stats) stats.skipped = stats.skipped + 1; return; }
       const code = (row.AccountCode === undefined || row.AccountCode === null ? '' : String(row.AccountCode)).trim();
       const key = code || String(row.AccountId || 'unknown');
       if (!map[key]) {
-        map[key] = { code: code, name: row.AccountName || '', b1: 0, b2: 0, b3: 0, b4: 0, total: 0, weighted: 0, absTotal: 0, count: 0, items: [] };
+        map[key] = { code: code, name: row.AccountName || '', total: 0, weighted: 0, absTotal: 0, count: 0, items: [] };
+        for (let b = 1; b <= nb; b++) { map[key]['b' + b] = 0; }
       }
       const acc = map[key];
+      if (!acc.name && row.AccountName) acc.name = row.AccountName;
       const preBucketed = row.AgeGroup1Amount !== undefined || row.Amount1 !== undefined;
       if (preBucketed) {
         const v1 = toEur(num(row.AgeGroup1Amount !== undefined ? row.AgeGroup1Amount : row.Amount1), currency, rates);
@@ -135,25 +167,41 @@ module.exports = function (getToken) {
       const amount = toEur(num(row.Amount !== undefined ? row.Amount : row.AmountDC), currency, rates);
       if (!amount) return;
       const age = ageOf(row, referTo, refDate);
-      let bucket = 'b4';
-      if (age <= 30) bucket = 'b1';
-      else if (age <= 60) bucket = 'b2';
-      else if (age <= 90) bucket = 'b3';
-      acc[bucket] = acc[bucket] + amount;
+      const b = 'b' + (bucketOf(age, edges) + 1);
+      acc[b] = acc[b] + amount;
       acc.total = acc.total + amount;
       acc.weighted = acc.weighted + age * Math.abs(amount);
       acc.absTotal = acc.absTotal + Math.abs(amount);
       acc.count = acc.count + 1;
+      // The single invoices behind the amount, so a row can be opened in the
+      // dashboard. Only the first 200 of one account are carried along, so the
+      // answer stays small.
+      if (acc.items.length < 200) {
+        acc.items.push({
+          invoiceNumber: String(row.InvoiceNumber || row.YourRef || row.EntryNumber || ''),
+          description: String(row.Description || ''),
+          yourRef: String(row.YourRef || ''),
+          invoiceDate: iso(toDate(row.InvoiceDate) || toDate(row.Date)),
+          dueDate: iso(toDate(row.DueDate)),
+          age: age,
+          amount: Math.round(amount * 100) / 100
+        });
+      }
     });
   }
-  function finalize(map) {
+    function finalize(map, edges) {
+    const nb = edges.length + 1;
     const list = [];
-    const totals = { b1: 0, b2: 0, b3: 0, b4: 0, total: 0 };
+    const totals = { total: 0 };
+    for (let b = 1; b <= nb; b++) { totals['b' + b] = 0; }
     Object.keys(map).forEach(function (k) {
       const a = map[k];
       a.avgDays = a.absTotal ? Math.round(a.weighted / a.absTotal) : 0;
-      totals.b1 += a.b1; totals.b2 += a.b2; totals.b3 += a.b3; totals.b4 += a.b4; totals.total += a.total;
-      if (a.b1 || a.b2 || a.b3 || a.b4) list.push(a);
+      a.average = a.avgDays;
+      let any = false;
+      for (let b = 1; b <= nb; b++) { const v = Number(a['b' + b]) || 0; totals['b' + b] += v; if (v) any = true; }
+      totals.total += a.total;
+      if (any) list.push(a);
     });
     list.sort(function (x, y) { return String(x.code).localeCompare(String(y.code)); });
     return { accounts: list, totals: totals };
@@ -177,7 +225,23 @@ module.exports = function (getToken) {
       res.status(500).json({ error: 'Divisions failed', details: e.response && e.response.data ? e.response.data : e.message });
     }
   });
-  async function handleAgeing(req, res, sources) {
+    // The names of the ranges follow the edges, so the page can draw whatever
+  // ranges the report is cut in.
+  function bucketLabels(edges) {
+    const out = [];
+    for (let i = 0; i <= edges.length; i++) {
+      let label;
+      if (i === 0) { label = '0 - ' + edges[0]; }
+      else if (i === edges.length) { label = '> ' + edges[edges.length - 1]; }
+      else { label = (edges[i - 1] + 1) + ' - ' + edges[i]; }
+      out.push({ key: 'b' + (i + 1), label: label });
+    }
+    return out;
+  }
+  async function handleAgeing(req, res, cfg) {
+    const sources = cfg.sources;
+    const edges = cfg.edges;
+    const allow = cfg.gl || [];
     const h = headers();
     if (!h) return res.status(401).json({ error: 'Not authenticated' });
     const referTo = req.query.referTo === 'duedate' ? 'duedate' : 'date';
@@ -185,7 +249,10 @@ module.exports = function (getToken) {
     const wanted = req.query.division ? String(req.query.division) : null;
     const consolidated = wanted === 'consolidated' || wanted === 'all';
     const rates = await getEurRates();
-    const out = { referTo: referTo, referenceDate: iso(refDate), division: null, consolidated: consolidated, currency: 'EUR', source: null, accounts: [], totals: { b1: 0, b2: 0, b3: 0, b4: 0, total: 0 }, itemCount: 0, ratesFrom: (ratesCache && ratesCache.fallback ? 'fallback' : 'frankfurter.dev'), errors: {}, lastUpdated: new Date().toISOString() };
+    const buckets = bucketLabels(edges);
+    const totals = { total: 0 };
+    buckets.forEach(function (b) { totals[b.key] = 0; });
+    const out = { referTo: referTo, referenceDate: iso(refDate), division: null, consolidated: consolidated, currency: 'EUR', source: null, buckets: buckets, glAccounts: allow, accounts: [], totals: totals, itemCount: 0, skippedRows: 0, ratesFrom: (ratesCache && ratesCache.fallback ? 'fallback' : 'frankfurter.dev'), errors: {}, lastUpdated: new Date().toISOString() };
     let targets = [];
     try {
       if (consolidated) { const all = await getAllDivisions(h); targets = all.map(function (d) { return d.code; }); }
@@ -197,14 +264,15 @@ module.exports = function (getToken) {
     }
     out.division = consolidated ? 'consolidated' : targets[0];
     const map = {}; let totalRows = 0; let gotAny = false;
+    const stats = { skipped: 0 };
     for (let i = 0; i < targets.length; i++) {
       const cur = await divisionCurrency(targets[i], h);
       const r = await fetchRowsFor(targets[i], sources, h, out.errors);
-      if (r.rows) { gotAny = true; if (!out.source) out.source = r.source; totalRows += r.rows.length; accumulate(map, r.rows, referTo, refDate, cur, rates); }
+      if (r.rows) { gotAny = true; if (!out.source) out.source = r.source; totalRows += r.rows.length; accumulate(map, r.rows, referTo, refDate, cur, rates, edges, allow, stats); }
     }
     if (!gotAny) return res.status(502).json(out);
-    const done = finalize(map);
-    out.accounts = done.accounts; out.totals = done.totals; out.itemCount = totalRows;
+    const done = finalize(map, edges);
+    out.accounts = done.accounts; out.totals = done.totals; out.itemCount = totalRows; out.skippedRows = stats.skipped;
     res.json(out);
   }
   // Diagnostic: the raw rows of the list Exact keeps behind the ageing report,
@@ -230,7 +298,7 @@ module.exports = function (getToken) {
   }
   return res.status(502).json({ error: 'no source worked', errors: errors });
   });
-  router.get('/api/ageing-ap', function (req, res) { return handleAgeing(req, res, AP_SOURCES); });
-  router.get('/api/ageing-ar', function (req, res) { return handleAgeing(req, res, AR_SOURCES); });
+  router.get('/api/ageing-ap', function (req, res) { return handleAgeing(req, res, { sources: AP_SOURCES, edges: AP_EDGES, gl: AP_GL }); });
+  router.get('/api/ageing-ar', function (req, res) { return handleAgeing(req, res, { sources: AR_SOURCES, edges: AR_EDGES, gl: [] }); });
   return router;
 };
