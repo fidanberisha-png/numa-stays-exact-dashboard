@@ -83,32 +83,32 @@
       if (a >= 0 && b > a) document.head.insertAdjacentHTML('beforeend', t.slice(a, b + 8));
     } catch (e) { }
     var extra = '<style>' +
-      '.pcard{background:#fdeaf3;border:1px solid #f3d5e4;border-radius:10px;padding:12px 14px;margin:14px 0}' +
-      '.pcard h3{margin:0 0 8px 0;font-size:13px;letter-spacing:.08em;text-transform:uppercase;color:#8a6e7d}' +
+      '.pcard{background:#fdeaee;border:1px solid #f0d7de;border-radius:10px;padding:12px 14px;margin:14px 0}' +
+      '.pcard h3{margin:0 0 8px 0;font-size:13px;letter-spacing:.08em;text-transform:uppercase;color:#6f6a6b}' +
       '.jtab{width:100%;border-collapse:collapse;font-size:13px}' +
-      '.jtab th{text-align:left;color:#8a6e7d;font-weight:600;padding:4px 8px;border-bottom:1px solid #f3d5e4}' +
-      '.jtab td{padding:4px 8px;border-bottom:1px solid #fdeaf3}' +
+      '.jtab th{text-align:left;color:#6f6a6b;font-weight:600;padding:4px 8px;border-bottom:1px solid #f0d7de}' +
+      '.jtab td{padding:4px 8px;border-bottom:1px solid #fdeaee}' +
       '.jtab td.r,.jtab th.r{text-align:right}' +
-      '.tag{display:inline-block;padding:1px 7px;border-radius:999px;font-size:11px;border:1px solid #f3d5e4}' +
+      '.tag{display:inline-block;padding:1px 7px;border-radius:999px;font-size:11px;border:1px solid #f0d7de}' +
       '.tag.ok{color:#0f9d76;border-color:#8fd8b4}' +
       '.tag.man{color:#b45309;border-color:#e6b56a}' +
       '.warn{color:#b45309}' +
-      '.muted{color:#8a6e7d}' +
+      '.muted{color:#6f6a6b}' +
       '.gbar{display:flex;align-items:center;gap:8px;margin:0 0 8px 0}' +
-      '.grp{border:1px solid #f3d5e4;border-radius:10px;margin-bottom:8px;overflow:hidden}' +
-      '.ghead{display:flex;align-items:center;gap:10px;padding:10px 12px;background:#fdeaf3;cursor:pointer}' +
-      '.ghead:hover{background:#fce3ef}' +
-      '.ghead .arw{width:14px;color:#8a6e7d}' +
+      '.grp{border:1px solid #f0d7de;border-radius:10px;margin-bottom:8px;overflow:hidden}' +
+      '.ghead{display:flex;align-items:center;gap:10px;padding:10px 12px;background:#fdeaee;cursor:pointer}' +
+      '.ghead:hover{background:#fbcfd9}' +
+      '.ghead .arw{width:14px;color:#6f6a6b}' +
       '.ghead .gcode{font-weight:700;min-width:90px}' +
-      '.ghead .gname{flex:1;color:#8a6e7d;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}' +
+      '.ghead .gname{flex:1;color:#6f6a6b;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}' +
       '.ghead .gnum{min-width:130px;text-align:right}' +
       '.ghead .gpre{font-weight:700}' +
-      '.ghead.gtot{background:#fff2f8;border:1px solid #f3d5e4;border-radius:10px;cursor:default;font-weight:700}' +
-      '.gbody{padding:6px 10px 10px 10px;background:#fff2f8}' +
+      '.ghead.gtot{background:#fdeaee;border:1px solid #f0d7de;border-radius:10px;cursor:default;font-weight:700}' +
+      '.gbody{padding:6px 10px 10px 10px;background:#fdeaee}' +
       '.btab td{padding:6px 8px}' +
-        '.btab tr.bop td{background:#fff2f8;font-weight:600}' +
-        '.btab tr.btot td{background:#fff2f8;font-weight:700;border-top:2px solid #e6007e}' +
-        '.btab tr.bcl td{background:#fdeaf3;font-weight:700;color:#e6007e}' +
+        '.btab tr.bop td{background:#fdeaee;font-weight:600}' +
+        '.btab tr.btot td{background:#fdeaee;font-weight:700;border-top:2px solid #f19ab1}' +
+        '.btab tr.bcl td{background:#fdeaee;font-weight:700;color:#1a1a18}' +
         '.ctl input[type=date],.ctl input[type=text],.ctl select{min-width:150px}' +
       '</style>';
     document.head.insertAdjacentHTML('beforeend', extra);
@@ -127,7 +127,7 @@
     YEARS.forEach(function (y) { yopts += '<option value="' + y + '">' + y + '</option>'; });
     document.body.innerHTML = [
       '<header>',
-      '<div class="brand">Numa Stays</div>',
+      '<div class="brand">Numa</div>',
       '<select class="company" id="company" title="Entity">' + opts + '</select>',
       '<select class="company" id="dashboard" title="Dashboards">',
       '<option value="prepaid">Dashboards: PrePaid</option>',
