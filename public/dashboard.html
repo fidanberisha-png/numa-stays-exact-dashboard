@@ -5,15 +5,15 @@
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
         <title>Numa Stays - Ageing analysis: A/P</title>
     <style>
-        :root { --bg:#fff7fb; --card:#ffffff; --line:#f2d9e6; --txt:#1f1220; --muted:#8a6e7d; --blue:#e6007e; --green:#12a150; --yellow:#b45309; --orange:#e2611a; --red:#d92d20; }
+        :root { --bg:#ffffff; --card:#ffffff; --line:#f0d7de; --txt:#1a1a18; --muted:#6f6a6b; --blue:#1a1a18; --green:#12a150; --yellow:#b45309; --orange:#e2611a; --red:#d92d20; }
         * { box-sizing:border-box; }
         body { margin:0; background:var(--bg); color:var(--txt); font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Arial,sans-serif; }
         header { display:flex; align-items:center; gap:14px; padding:14px 24px; border-bottom:1px solid var(--line); flex-wrap:wrap; }
         .brand { font-size:18px; font-weight:700; }
-        .company { background:#fff2f8; border:1px solid var(--line); border-radius:8px; padding:7px 32px 7px 13px; font-weight:600; font-size:14px; width:auto; min-width:200px; max-width:340px; color:var(--txt); cursor:pointer; appearance:none; -webkit-appearance:none; background-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%238b98a5' stroke-width='2'><path d='M6 9l6 6 6-6'/></svg>"); background-repeat:no-repeat; background-position:right 11px center; }
-                .company:hover { border-color:#ff8cc6; }
+        .company { background:#fdeaee; border:1px solid var(--line); border-radius:8px; padding:7px 32px 7px 13px; font-weight:600; font-size:14px; width:auto; min-width:200px; max-width:340px; color:var(--txt); cursor:pointer; appearance:none; -webkit-appearance:none; background-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%238b98a5' stroke-width='2'><path d='M6 9l6 6 6-6'/></svg>"); background-repeat:no-repeat; background-position:right 11px center; }
+                .company:hover { border-color:#f19ab1; }
                 .company:focus { outline:none; border-color:var(--blue); }
-                #dashboard { background-color:#ffe6f2; border-color:#ffb3d9; color:var(--blue); }
+                #dashboard { background-color:#fbcfd9; border-color:#f0d7de; color:var(--blue); }
         .spacer { flex:1; }
         .pill { padding:6px 12px; border-radius:999px; font-size:12px; border:1px solid var(--line); color:var(--muted); }
         .pill.ok { color:var(--green); border-color:#a8dfbc; background:#e9f9ef; }
@@ -29,50 +29,62 @@
         input, .controls select { background:#ffffff; color:var(--txt); border:1px solid var(--line); border-radius:8px; padding:9px 10px; font-size:13px; width:100%; }
         .kpis { display:grid; grid-template-columns:repeat(auto-fit,minmax(190px,1fr)); gap:14px; padding:0 24px 20px; }
         .kpi { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:16px; }
-        .kpi.big { border-color:#f2d9e6; }
+        .kpi.big { border-color:#f0d7de; }
         .kpi .t { font-size:11px; letter-spacing:.08em; color:var(--muted); }
         .kpi .v { font-size:23px; font-weight:700; margin-top:8px; }
         .kpi .s { font-size:12px; color:var(--muted); margin-top:6px; }
-        .kpi .bar { height:4px; border-radius:3px; margin-top:12px; background:#f0c4dc; overflow:hidden; }
+        .kpi .bar { height:4px; border-radius:3px; margin-top:12px; background:#f0d7de; overflow:hidden; }
         .kpi .bar span { display:block; height:100%; border-radius:3px; }
         .wrap { margin:0 24px 16px; background:var(--card); border:1px solid var(--line); border-radius:12px; overflow:auto; }
         table { width:100%; border-collapse:collapse; font-size:13px; }
         th, td { padding:10px 14px; text-align:left; white-space:nowrap; }
         th.num, td.num { text-align:right; }
         .mono { font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; }
-        thead th { background:#fdeaf3; color:var(--muted); font-size:11px; letter-spacing:.06em; cursor:pointer; position:sticky; top:0; }
+        thead th { background:#fdeaee; color:var(--muted); font-size:11px; letter-spacing:.06em; cursor:pointer; position:sticky; top:0; }
         thead th.on { color:var(--blue); }
         tbody tr.row { border-top:1px solid var(--line); cursor:pointer; }
-        tbody tr.row:hover { background:#fff0f7; }
+        tbody tr.row:hover { background:#fdeaee; }
         tbody tr.risk { box-shadow:inset 3px 0 0 var(--red); }
-        tfoot td { border-top:2px solid var(--line); font-weight:700; background:#fdeaf3; }
+        tfoot td { border-top:2px solid var(--line); font-weight:700; background:#fdeaee; }
         td.strong { font-weight:700; }
         td.warn { color:var(--yellow); }
         td.hot { color:var(--orange); }
         td.bad { color:var(--red); font-weight:600; }
-        td.neg { color:#d1006f; }
-        td.zero { color:#c9a8b9; }
-        .detail td { background:#fff2f8; padding:0 14px 14px; }
+        td.neg { color:#1a1a18; }
+        td.zero { color:#b8b0b2; }
+        .detail td { background:#fdeaee; padding:0 14px 14px; }
         .detail table.inner { margin-top:6px; font-size:12px; }
         .detail th { position:static; background:transparent; cursor:default; }
         .state { padding:40px; text-align:center; color:var(--muted); }
         .note { color:var(--muted); font-size:12px; padding:0 24px 40px; }
         
-        /* Numa look: white page with the pink of the logo as the one accent colour. */
-        :root { --pink:#e6007e; --pink-soft:#fff2f8; --pink-line:#ffb3d9; }
-        body { background:#fff7fb; color:#1f1220; }
-        header { background:#ffffff; border-bottom:2px solid var(--pink); box-shadow:0 1px 3px rgba(230,0,126,.06); }
-        .brand { color:var(--pink); letter-spacing:.01em; }
-        h1 { color:#1f1220; }
-        .kpi, .wrap, .sumcard, .pcard { box-shadow:0 1px 3px rgba(230,0,126,.07); }
-        .kpi .v { color:#1f1220; }
-        .btn { box-shadow:0 1px 2px rgba(230,0,126,.25); }
-        .btn:hover { filter:brightness(1.06); }
-        .btn.sec:hover { border-color:var(--pink); color:var(--pink); }
-        .tab.on, .vtab.on { color:#ffffff; }
-        .tab:hover, .vtab:hover { border-color:var(--pink); color:var(--pink); }
-        input:focus, select:focus { outline:none; border-color:var(--pink); box-shadow:0 0 0 3px rgba(230,0,126,.12); }
-        ::selection { background:#ffd1e8; }
+        /* Numa look: white page, the pink of the logo as the accent, the ink of the logo as the text. */
+        :root { --ink:#1a1a18; --pink:#fbcfd9; --pink-soft:#fdeaee; --pink-mid:#f19ab1; --pink-line:#f0d7de; }
+        body { background:#ffffff; color:var(--ink); }
+        header { background:#ffffff; border-bottom:3px solid var(--pink); }
+        .brand { color:var(--ink); background:var(--pink); padding:6px 13px; border-radius:8px; font-weight:800; letter-spacing:-.01em; }
+        h1 { color:var(--ink); }
+        .sub { color:#6f6a6b; }
+        .company { background:var(--pink-soft); border-color:var(--pink-line); color:var(--ink); }
+        .company:hover { border-color:var(--pink-mid); }
+        #dashboard { background-color:var(--pink); border-color:var(--pink-mid); color:var(--ink); }
+        .pill { background:#ffffff; border-color:var(--pink-line); color:#6f6a6b; }
+        .pill.ok { background:var(--pink-soft); border-color:var(--pink-mid); color:var(--ink); }
+        .btn { background:var(--pink); border:1px solid var(--pink-mid); color:var(--ink); font-weight:700; box-shadow:none; }
+        .btn:hover { background:var(--pink-mid); filter:none; }
+        .btn.sec { background:#ffffff; border:1px solid var(--pink-line); color:var(--ink); }
+        .btn.sec:hover { background:var(--pink-soft); border-color:var(--pink-mid); color:var(--ink); }
+        .kpi { background:#ffffff; border-left:3px solid var(--pink); box-shadow:0 1px 3px rgba(26,26,24,.06); }
+        .kpi .v { color:var(--ink); }
+        .wrap, .sumcard { background:#ffffff; box-shadow:0 1px 3px rgba(26,26,24,.06); }
+        .pcard { background:var(--pink-soft); border-color:var(--pink-line); box-shadow:0 1px 3px rgba(26,26,24,.06); }
+        thead th { background:var(--pink-soft); color:#6f6a6b; }
+        tfoot td { background:var(--pink-soft); }
+        .tab, .vtab { background:#ffffff; }
+        .tab.on, .vtab.on { background:var(--pink); border-color:var(--pink-mid); color:var(--ink); }
+        .tab:hover, .vtab:hover { border-color:var(--pink-mid); color:var(--ink); }
+        input:focus, select:focus { outline:none; border-color:var(--pink-mid); box-shadow:0 0 0 3px rgba(241,154,177,.30); }
+        ::selection { background:var(--pink); }
         </style>
     </head>
     <body>
