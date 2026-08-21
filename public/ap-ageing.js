@@ -529,6 +529,209 @@ var s = name || '';
 var i = s.lastIndexOf(tag);
 return i > -1 ? s.slice(0, i) : s;
 }
+// ===== Export of the consolidated summary to Excel =====
+// The summary that stands on the screen is written into a real Excel file in
+// the browser itself: one sheet with the entities and one sheet with every
+// vendor of every entity. No amount is changed, only written down.
+var XCRC = null;
+function xCrc32(buf) {
+if (!XCRC) { XCRC = new Int32Array(256); for (var n = 0; n < 256; n++) { var c = n; for (var k = 0; k < 8; k++) { c = (c & 1) ? (0xEDB88320 ^ (c >>> 1)) : (c >>> 1); } XCRC[n] = c; } }
+var crc = -1;
+for (var i = 0; i < buf.length; i++) { crc = (crc >>> 8) ^ XCRC[(crc ^ buf[i]) & 255]; }
+return (crc ^ (-1)) >>> 0;
+}
+function xZip(files) {
+var enc = new TextEncoder(), parts = [], central = [], offset = 0, cdSize = 0;
+function u16(n) { return [n & 255, (n >>> 8) & 255]; }
+function u32(n) { return [n & 255, (n >>> 8) & 255, (n >>> 16) & 255, (n >>> 24) & 255]; }
+files.forEach(function (f) {
+var nb = enc.encode(f.name), data = enc.encode(f.body), crc = xCrc32(data);
+var lh = [80, 75, 3, 4].concat(u16(20), u16(0), u16(0), u16(0), u16(0), u32(crc), u32(data.length), u32(data.length), u16(nb.length), u16(0));
+parts.push(new Uint8Array(lh)); parts.push(nb); parts.push(data);
+var ch = [80, 75, 1, 2].concat(u16(20), u16(20), u16(0), u16(0), u16(0), u16(0), u32(crc), u32(data.length), u32(data.length), u16(nb.length), u16(0), u16(0), u16(0), u16(0), u32(0), u32(offset));
+central.push(new Uint8Array(ch)); central.push(nb);
+offset += lh.length + nb.length + data.length;
+});
+central.forEach(function (p) { cdSize += p.length; });
+central.forEach(function (p) { parts.push(p); });
+parts.push(new Uint8Array([80, 75, 5, 6].concat(u16(0), u16(0), u16(files.length), u16(files.length), u32(cdSize), u32(offset), u16(0))));
+var total = 0; parts.forEach(function (p) { total += p.length; });
+var out = new Uint8Array(total), pos = 0;
+parts.forEach(function (p) { out.set(p, pos); pos += p.length; });
+return out;
+}
+function xEsc(v) {
+var s = (v === null || v === undefined) ? '' : String(v);
+s = s.split('&').join('&amp;');
+s = s.split('<').join('&lt;');
+s = s.split('>').join('&gt;');
+s = s.split(String.fromCharCode(34)).join('&quot;');
+s = s.split(String.fromCharCode(39)).join('&apos;');
+return s;
+}
+function xCol(i) { var s = '', n = i + 1; while (n > 0) { var m = (n - 1) % 26; s = String.fromCharCode(65 + m) + s; n = Math.floor((n - 1) / 26); } return s; }
+var X_STYLES = '<?xml version=' + String.fromCharCode(34) + '1.0' + String.fromCharCode(34) + ' encoding=' + String.fromCharCode(34) + 'UTF-8' + String.fromCharCode(34) + ' standalone=' + String.fromCharCode(34) + 'yes' + String.fromCharCode(34) + '?>';
+var XQ = String.fromCharCode(34);
+var X_HEAD = '<?xml version=' + XQ + '1.0' + XQ + ' encoding=' + XQ + 'UTF-8' + XQ + ' standalone=' + XQ + 'yes' + XQ + '?>';
+function xSheet(rows, widths) {
+var h = X_HEAD + '<worksheet xmlns=' + XQ + 'http://schemas.openxmlformats.org/spreadsheetml/2006/main' + XQ + '>';
+if (widths && widths.length) {
+h += '<cols>';
+widths.forEach(function (w, i) { h += '<col min=' + XQ + (i + 1) + XQ + ' max=' + XQ + (i + 1) + XQ + ' width=' + XQ + w + XQ + ' customWidth=' + XQ + '1' + XQ + '/>'; });
+h += '</cols>';
+}
+h += '<sheetData>';
+rows.forEach(function (cells, ri) {
+h += '<row r=' + XQ + (ri + 1) + XQ + '>';
+cells.forEach(function (c, ci) {
+if (!c) return;
+var ref = xCol(ci) + (ri + 1), st = c.s || 0;
+if (c.n !== undefined && c.n !== null) { h += '<c r=' + XQ + ref + XQ + ' s=' + XQ + st + XQ + '><v>' + (Math.round(Number(c.n) * 100) / 100) + '</v></c>'; }
+else { h += '<c r=' + XQ + ref + XQ + ' s=' + XQ + st + XQ + ' t=' + XQ + 'inlineStr' + XQ + '><is><t>' + xEsc(c.v) + '</t></is></c>'; }
+});
+h += '</row>';
+});
+return h + '</sheetData></worksheet>';
+}
+function xStyles() {
+var h = X_HEAD + '<styleSheet xmlns=' + XQ + 'http://schemas.openxmlformats.org/spreadsheetml/2006/main' + XQ + '>';
+h += '<numFmts count=' + XQ + '1' + XQ + '><numFmt numFmtId=' + XQ + '164' + XQ + ' formatCode=' + XQ + '#,##0.00' + XQ + '/></numFmts>';
+h += '<fonts count=' + XQ + '3' + XQ + '><font><sz val=' + XQ + '11' + XQ + '/><name val=' + XQ + 'Calibri' + XQ + '/></font>';
+h += '<font><b/><sz val=' + XQ + '11' + XQ + '/><name val=' + XQ + 'Calibri' + XQ + '/></font>';
+h += '<font><b/><sz val=' + XQ + '14' + XQ + '/><name val=' + XQ + 'Calibri' + XQ + '/></font></fonts>';
+h += '<fills count=' + XQ + '3' + XQ + '><fill><patternFill patternType=' + XQ + 'none' + XQ + '/></fill>';
+h += '<fill><patternFill patternType=' + XQ + 'gray125' + XQ + '/></fill>';
+h += '<fill><patternFill patternType=' + XQ + 'solid' + XQ + '><fgColor rgb=' + XQ + 'FFFBCFD9' + XQ + '/><bgColor indexed=' + XQ + '64' + XQ + '/></patternFill></fill></fills>';
+h += '<borders count=' + XQ + '1' + XQ + '><border><left/><right/><top/><bottom/><diagonal/></border></borders>';
+h += '<cellStyleXfs count=' + XQ + '1' + XQ + '><xf numFmtId=' + XQ + '0' + XQ + ' fontId=' + XQ + '0' + XQ + ' fillId=' + XQ + '0' + XQ + ' borderId=' + XQ + '0' + XQ + '/></cellStyleXfs>';
+h += '<cellXfs count=' + XQ + '6' + XQ + '>';
+h += '<xf numFmtId=' + XQ + '0' + XQ + ' fontId=' + XQ + '0' + XQ + ' fillId=' + XQ + '0' + XQ + ' borderId=' + XQ + '0' + XQ + ' xfId=' + XQ + '0' + XQ + '/>';
+h += '<xf numFmtId=' + XQ + '0' + XQ + ' fontId=' + XQ + '1' + XQ + ' fillId=' + XQ + '2' + XQ + ' borderId=' + XQ + '0' + XQ + ' xfId=' + XQ + '0' + XQ + ' applyFont=' + XQ + '1' + XQ + ' applyFill=' + XQ + '1' + XQ + '/>';
+h += '<xf numFmtId=' + XQ + '164' + XQ + ' fontId=' + XQ + '0' + XQ + ' fillId=' + XQ + '0' + XQ + ' borderId=' + XQ + '0' + XQ + ' xfId=' + XQ + '0' + XQ + ' applyNumberFormat=' + XQ + '1' + XQ + '/>';
+h += '<xf numFmtId=' + XQ + '164' + XQ + ' fontId=' + XQ + '1' + XQ + ' fillId=' + XQ + '2' + XQ + ' borderId=' + XQ + '0' + XQ + ' xfId=' + XQ + '0' + XQ + ' applyNumberFormat=' + XQ + '1' + XQ + ' applyFont=' + XQ + '1' + XQ + ' applyFill=' + XQ + '1' + XQ + '/>';
+h += '<xf numFmtId=' + XQ + '0' + XQ + ' fontId=' + XQ + '1' + XQ + ' fillId=' + XQ + '0' + XQ + ' borderId=' + XQ + '0' + XQ + ' xfId=' + XQ + '0' + XQ + ' applyFont=' + XQ + '1' + XQ + '/>';
+h += '<xf numFmtId=' + XQ + '0' + XQ + ' fontId=' + XQ + '2' + XQ + ' fillId=' + XQ + '0' + XQ + ' borderId=' + XQ + '0' + XQ + ' xfId=' + XQ + '0' + XQ + ' applyFont=' + XQ + '1' + XQ + '/>';
+h += '</cellXfs>';
+h += '<cellStyles count=' + XQ + '1' + XQ + '><cellStyle name=' + XQ + 'Normal' + XQ + ' xfId=' + XQ + '0' + XQ + ' builtinId=' + XQ + '0' + XQ + '/></cellStyles>';
+return h + '</styleSheet>';
+}
+function xBuild(sheets) {
+var NS = 'http://schemas.openxmlformats.org/';
+var ct = X_HEAD + '<Types xmlns=' + XQ + NS + 'package/2006/content-types' + XQ + '>';
+ct += '<Default Extension=' + XQ + 'rels' + XQ + ' ContentType=' + XQ + 'application/vnd.openxmlformats-package.relationships+xml' + XQ + '/>';
+ct += '<Default Extension=' + XQ + 'xml' + XQ + ' ContentType=' + XQ + 'application/xml' + XQ + '/>';
+ct += '<Override PartName=' + XQ + '/xl/workbook.xml' + XQ + ' ContentType=' + XQ + 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml' + XQ + '/>';
+ct += '<Override PartName=' + XQ + '/xl/styles.xml' + XQ + ' ContentType=' + XQ + 'application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml' + XQ + '/>';
+sheets.forEach(function (s, i) { ct += '<Override PartName=' + XQ + '/xl/worksheets/sheet' + (i + 1) + '.xml' + XQ + ' ContentType=' + XQ + 'application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml' + XQ + '/>'; });
+ct += '</Types>';
+var rels = X_HEAD + '<Relationships xmlns=' + XQ + NS + 'package/2006/relationships' + XQ + '><Relationship Id=' + XQ + 'rId1' + XQ + ' Type=' + XQ + NS + 'officeDocument/2006/relationships/officeDocument' + XQ + ' Target=' + XQ + 'xl/workbook.xml' + XQ + '/></Relationships>';
+var wb = X_HEAD + '<workbook xmlns=' + XQ + NS + 'spreadsheetml/2006/main' + XQ + ' xmlns:r=' + XQ + NS + 'officeDocument/2006/relationships' + XQ + '><sheets>';
+sheets.forEach(function (s, i) { wb += '<sheet name=' + XQ + xEsc(s.name) + XQ + ' sheetId=' + XQ + (i + 1) + XQ + ' r:id=' + XQ + 'rId' + (i + 1) + XQ + '/>'; });
+wb += '</sheets></workbook>';
+var wbr = X_HEAD + '<Relationships xmlns=' + XQ + NS + 'package/2006/relationships' + XQ + '>';
+sheets.forEach(function (s, i) { wbr += '<Relationship Id=' + XQ + 'rId' + (i + 1) + XQ + ' Type=' + XQ + NS + 'officeDocument/2006/relationships/worksheet' + XQ + ' Target=' + XQ + 'worksheets/sheet' + (i + 1) + '.xml' + XQ + '/>'; });
+wbr += '<Relationship Id=' + XQ + 'rId' + (sheets.length + 1) + XQ + ' Type=' + XQ + NS + 'officeDocument/2006/relationships/styles' + XQ + ' Target=' + XQ + 'styles.xml' + XQ + '/></Relationships>';
+var files = [
+{ name: '[Content_Types].xml', body: ct },
+{ name: '_rels/.rels', body: rels },
+{ name: 'xl/workbook.xml', body: wb },
+{ name: 'xl/_rels/workbook.xml.rels', body: wbr },
+{ name: 'xl/styles.xml', body: xStyles() }
+];
+sheets.forEach(function (s, i) { files.push({ name: 'xl/worksheets/sheet' + (i + 1) + '.xml', body: xSheet(s.rows, s.widths) }); });
+return xZip(files);
+}
+function xSave(blob, name) {
+var a = document.createElement('a');
+a.href = URL.createObjectURL(blob);
+a.download = name;
+document.body.appendChild(a);
+a.click();
+setTimeout(function () { URL.revokeObjectURL(a.href); if (a.parentNode) a.parentNode.removeChild(a); }, 2000);
+}
+function xIsAP() { return (document.getElementById('dashboard') || {}).value !== 'ar'; }
+function xDate() { var d = el('refdate') ? el('refdate').value : ''; return d || new Date().toISOString().slice(0, 10); }
+function xSummaryData() {
+var acc = (LAST && LAST.accounts) ? LAST.accounts : [];
+var isAP = xIsAP();
+var who = isAP ? 'Suppliers' : 'Customers';
+var one = isAP ? 'Vendor' : 'Customer';
+var by = (el('referto') && el('referto').value === 'duedate') ? 'due date' : 'invoice date';
+var title = 'Ageing analysis: ' + (isAP ? 'A/P' : 'A/R') + ' - consolidated summary of ' + ENT.length + ' entities';
+var line2 = 'Reference date ' + xDate() + ' - aged by ' + by + ' - all amounts converted to EUR';
+var line3 = 'Exported from the Numa dashboard on ' + new Date().toLocaleString('nb-NO') + ' - live data of Exact Online';
+var sum = [];
+sum.push([{ v: title, s: 5 }]);
+sum.push([{ v: line2 }]);
+sum.push([{ v: line3 }]);
+sum.push([]);
+sum.push(['Entity', 'Entity name', 'Region', who, '0 - 30', '31 - 60', '61 - 90', 'Over 90', 'Outstanding', 'Average days'].map(function (t) { return { v: t, s: 1 }; }));
+var det = [];
+det.push([{ v: title + ' - per ' + one.toLowerCase(), s: 5 }]);
+det.push([{ v: line2 }]);
+det.push([]);
+det.push(['Entity', 'Entity name', 'Code', one, '0 - 30', '31 - 60', '61 - 90', 'Over 90', 'Outstanding', 'Average days'].map(function (t) { return { v: t, s: 1 }; }));
+ENT.forEach(function (m) {
+var list = entityAccounts(m[1]);
+var t = totalsOf(list);
+sum.push([{ v: String(m[1]) }, { v: m[3] }, { v: m[0] }, { n: list.length }, { n: t.b1, s: 2 }, { n: t.b2, s: 2 }, { n: t.b3, s: 2 }, { n: t.b4, s: 2 }, { n: t.total, s: 2 }, { n: t.average || 0 }]);
+list.forEach(function (a) {
+det.push([{ v: String(m[1]) }, { v: m[3] }, { v: String(a.code || '') }, { v: vendorLabel(a.name, m[1]) }, { n: Number(a.b1) || 0, s: 2 }, { n: Number(a.b2) || 0, s: 2 }, { n: Number(a.b3) || 0, s: 2 }, { n: Number(a.b4) || 0, s: 2 }, { n: Number(a.total) || 0, s: 2 }, { n: Number(a.average) || 0 }]);
+});
+});
+var g = totalsOf(acc);
+function totRow(label2) { return [{ v: 'TOTAL', s: 4 }, { v: label2, s: 4 }, { v: '', s: 4 }, { n: acc.length, s: 4 }, { n: g.b1, s: 3 }, { n: g.b2, s: 3 }, { n: g.b3, s: 3 }, { n: g.b4, s: 3 }, { n: g.total, s: 3 }, { n: g.average || 0, s: 4 }]; }
+sum.push([]);
+sum.push(totRow(ENT.length + ' entities'));
+det.push([]);
+det.push(totRow(ENT.length + ' entities'));
+return { sum: sum, det: det, isAP: isAP, who: who, one: one, rows: acc.length };
+}
+function xSheets() {
+var d = xSummaryData();
+return { d: d, sheets: [
+{ name: 'Summary', rows: d.sum, widths: [10, 34, 10, 12, 15, 15, 15, 15, 17, 14] },
+{ name: 'Per ' + d.one.toLowerCase(), rows: d.det, widths: [10, 30, 12, 42, 15, 15, 15, 15, 17, 14] }
+] };
+}
+function xFileName(d, ext) { return 'numa-' + (d.isAP ? 'ap' : 'ar') + '-ageing-summary-' + xDate() + '.' + ext; }
+function xExportExcel() {
+var x = xSheets();
+var bytes = xBuild(x.sheets);
+xSave(new Blob([bytes], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }), xFileName(x.d, 'xlsx'));
+}
+function xExportCsv() {
+var x = xSheets();
+var NLC = String.fromCharCode(13) + String.fromCharCode(10);
+var lines = [];
+x.d.sum.forEach(function (row) {
+lines.push(row.map(function (c) {
+if (!c) return '';
+if (c.n !== undefined && c.n !== null) { return String(Math.round(Number(c.n) * 100) / 100).split('.').join(','); }
+var s = String(c.v === undefined || c.v === null ? '' : c.v);
+if (s.indexOf(';') > -1 || s.indexOf(String.fromCharCode(34)) > -1) { return String.fromCharCode(34) + s.split(String.fromCharCode(34)).join(String.fromCharCode(34) + String.fromCharCode(34)) + String.fromCharCode(34); }
+return s;
+}).join(';'));
+});
+var body = String.fromCharCode(0xFEFF) + lines.join(NLC);
+xSave(new Blob([body], { type: 'text/csv;charset=utf-8' }), xFileName(x.d, 'csv'));
+}
+window.__numaSummaryExcel = { build: function () { return xBuild(xSheets().sheets); }, save: xExportExcel, data: xSummaryData };
+function exportBar() {
+var isAP = xIsAP();
+var s1 = 'background:#fbcfd9;border:1px solid #f19ab1;color:#1a1a18;padding:9px 16px;border-radius:8px;font-weight:700;font-size:12px;cursor:pointer;';
+var s2 = 'background:#ffffff;border:1px solid #f0d7de;color:#1a1a18;padding:9px 16px;border-radius:8px;font-weight:700;font-size:12px;cursor:pointer;';
+var h = '<div id=' + XQ + 'sumTools' + XQ + ' style=' + XQ + 'display:flex;align-items:center;gap:10px;margin:2px 0 12px;' + XQ + '>';
+h += '<button type=' + XQ + 'button' + XQ + ' id=' + XQ + 'sumXlsx' + XQ + ' style=' + XQ + s1 + XQ + '>Export Excel</button>';
+h += '<button type=' + XQ + 'button' + XQ + ' id=' + XQ + 'sumCsv' + XQ + ' style=' + XQ + s2 + XQ + '>Export CSV</button>';
+h += '<span style=' + XQ + 'color:#6f6a6b;font-size:12px;' + XQ + '>' + (isAP ? 'A/P' : 'A/R') + ' summary of ' + ENT.length + ' entities - one sheet per entity and one per ' + (isAP ? 'vendor' : 'customer') + '</span>';
+return h + '</div>';
+}
+function bindExport(box) {
+var a = box.querySelector('#sumXlsx'), b = box.querySelector('#sumCsv');
+if (a) a.onclick = function (ev) { if (ev && ev.stopPropagation) ev.stopPropagation(); xExportExcel(); };
+if (b) b.onclick = function (ev) { if (ev && ev.stopPropagation) ev.stopPropagation(); xExportCsv(); };
+}
 function renderSummary() {
 ensureTabs();
 layout();
@@ -578,7 +781,8 @@ h += '</table></td></tr>';
 h += '</tbody><tfoot><tr><td>TOTAL</td><td>' + rows.length + ' entities - ' + acc.length + ' ' + who.toLowerCase() + '</td>';
 h += money(grand.b1) + money(grand.b2) + money(grand.b3) + money(grand.b4) + money(grand.total);
 h += '<td class="num">' + grand.average + '</td></tr></tfoot></table>';
-box.innerHTML = h;
+box.innerHTML = exportBar() + h;
+bindExport(box);
 var drops = box.querySelectorAll('.numaDrop');
 for (var i = 0; i < drops.length; i++) {
 drops[i].onclick = function (ev) {
