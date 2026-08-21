@@ -312,18 +312,28 @@ module.exports = function (getToken) {
     async function opening(division, code, year, h) {
         const ckey = 'popen|' + division + '|' + code + '|' + year;
         const hit = cacheGet(ckey, false);
-        if (hit !== null && hit !== undefined) return hit;
-        const f = 'FinancialYear lt ' + year +
-            " and GLAccountCode ge '" + code + "' and GLAccountCode le '" + code + "zzzz'";
-        let rows;
+        if (hit) return hit;
+        const range = " and GLAccountCode ge '" + code + "' and GLAccountCode le '" + code + "zzzz'";
+        let n = 0, src = '', got = 0;
         try {
-            rows = await fetchAll(division, 'bulk/Financial/TransactionLines?$select=AmountDC,FinancialYear&$filter=' + f, h, 200);
-        } catch (eA) {
-            rows = await lines(division, f, h);
+            // The balance of Exact itself: the same figure the report of Exact opens
+            // with, every year before the chosen one added up.
+            const f = "BalanceType eq 'B' and ReportingYear le " + (year - 1) + range;
+            const rs = await fetchAll(division, 'financial/ReportingBalance?$select=Amount,ReportingYear,GLAccountCode&$filter=' + f, h, 80);
+            got = rs.length;
+            rs.forEach(function (r) { n += Number(r.Amount) || 0; });
+            src = 'the balance of Exact';
+        } catch (eB) { got = 0; n = 0; src = ''; }
+        if (!got) {
+            // Exact gave no balance rows, so the lines of the earlier years are added
+            // up instead. Nothing is guessed either way.
+            const f2 = 'FinancialYear lt ' + year + range;
+            const rs2 = await lines(division, f2, h);
+            n = 0;
+            rs2.forEach(function (r) { n += Number(r.AmountDC) || 0; });
+            src = 'the lines of the years before';
         }
-        let n = 0;
-        rows.forEach(function (r) { n += Number(r.AmountDC) || 0; });
-        return cacheSet(ckey, r2(n));
+        return cacheSet(ckey, { amount: r2(n), source: src });
     }
 
     // The prepaid accounts that the chosen entity really has in Exact.
@@ -491,9 +501,9 @@ module.exports = function (getToken) {
             // The balance of the account, drawn like the journal report of Exact: the
             // opening balance, then the journals, then the total and the closing
             // balance. Nothing is recalculated, the lines are only added up.
-            let openNet = 0, openFailed = false;
+            let openNet = 0, openFailed = false, openSource = '';
             if (year) {
-                try { openNet = await opening(division, code, year, h); }
+                try { const o = await opening(division, code, year, h); openNet = o.amount; openSource = o.source; }
                 catch (eO) { openFailed = true; openNet = 0; }
             }
             const bJournals = (journal && journal !== 'all')
@@ -506,6 +516,7 @@ module.exports = function (getToken) {
             const closeNet = r2(openNet + bDebit - bCredit);
             const balance = {
                 allYears: !year,
+                openingSource: openSource,
                 openingFailed: openFailed,
                 opening: { debit: r2(opDebit), credit: r2(opCredit), amount: r2(openNet) },
                 journals: bJournals,
