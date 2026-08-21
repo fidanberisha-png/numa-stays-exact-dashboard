@@ -81,7 +81,7 @@
     GLS.forEach(function (g) { gopts += '<option value="' + g[0] + '">' + esc(g[1] + ' (' + g[0] + ')') + '</option>'; });
     document.body.innerHTML = [
       '<header>',
-      '<div class="brand">Numa Stays</div>',
+      '<div class="brand">Numa</div>',
       '<select class="company" id="company" title="Entity">' + opts + '</select>',
       '<select class="company" id="dashboard" title="Dashboards">',
       '<option value="accrued">Dashboards: Accrued</option>',
@@ -387,7 +387,7 @@
     if (document.getElementById('nsInfoStyle')) return;
     var st = document.createElement('style');
     st.id = 'nsInfoStyle';
-    st.textContent = '.nsinfo{display:inline-flex;align-items:center;justify-content:center;width:15px;height:15px;border-radius:50%;border:1px solid currentColor;font-size:10px;font-weight:700;line-height:1;margin-left:8px;cursor:help;opacity:.75;vertical-align:middle;font-family:inherit;flex:0 0 auto}.nsinfo:hover{opacity:1}#nsTipBox{position:fixed;display:none;width:320px;padding:10px 12px;border-radius:8px;background:#ffffff;color:#1f1220;border:1px solid #f2d9e6;font-size:11px;font-weight:700;line-height:1.55;letter-spacing:0;text-align:left;white-space:normal;z-index:9999;box-shadow:0 12px 28px rgba(0,0,0,.55)}';
+    st.textContent = '.nsinfo{display:inline-flex;align-items:center;justify-content:center;width:15px;height:15px;border-radius:50%;border:1px solid currentColor;font-size:10px;font-weight:700;line-height:1;margin-left:8px;cursor:help;opacity:.75;vertical-align:middle;font-family:inherit;flex:0 0 auto}.nsinfo:hover{opacity:1}#nsTipBox{position:fixed;display:none;width:320px;padding:10px 12px;border-radius:8px;background:#ffffff;color:#1a1a18;border:1px solid #f0d7de;font-size:11px;font-weight:700;line-height:1.55;letter-spacing:0;text-align:left;white-space:normal;z-index:9999;box-shadow:0 12px 28px rgba(0,0,0,.55)}';
     document.head.appendChild(st);
     var box = document.createElement('div');
     box.id = 'nsTipBox';
