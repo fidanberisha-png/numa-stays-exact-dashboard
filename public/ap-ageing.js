@@ -99,121 +99,197 @@ function stamp() {
   el('asof').innerHTML = 'As of <b>' + esc(d.referenceDate || el('refdate').value) + '</b> - aged by ' + by + ' - live from Exact Online, refreshed ' + w.toLocaleString('nb-NO') + ' - all amounts converted to <b>EUR</b>';
   var extra = '';
   if (d.errors && Object.keys(d.errors).length) { extra = ' - notes: ' + esc(JSON.stringify(d.errors)); }
-  el('note').innerHTML = 'Division ' + esc(d.division) + ' - source ' + esc(d.source) + ' - ' + (d.itemCount || 0) + ' open items' + extra;
+  var glNote = (d.glAccounts && d.glAccounts.length) ? (' - only G/L ' + esc(d.glAccounts.join(' + '))) : '';
+var skipNote = d.skippedRows ? (' - ' + d.skippedRows + ' rows of other accounts left out') : '';
+el('note').innerHTML = 'Division ' + esc(d.division) + ' - source ' + esc(d.source) + ' - ' + (d.itemCount || 0) + ' open items' + glNote + skipNote + extra;
+}
+// The ranges are not fixed any more: the report itself says which ranges it is
+// cut in, so A/P can use the fine ranges of Exact and A/R keeps its own.
+function BKS() {
+var d = S.data;
+if (d && d.buckets && d.buckets.length) { return d.buckets; }
+return [{ key: 'b1', label: '0 - 30' }, { key: 'b2', label: '31 - 60' }, { key: 'b3', label: '61 - 90' }, { key: 'b4', label: '> 90' }];
+}
+function bkeys() { return BKS().map(function (b) { return b.key; }); }
+function cols() {
+var c = [['code', 'Code', 0], ['entity', 'Entity', 0], ['name', 'Name', 0]];
+BKS().forEach(function (b) { c.push([b.key, b.label, 1]); });
+c.push(['total', 'Outstanding', 1]);
+c.push(['average', 'Average', 1]);
+return c;
+}
+function entOf(r) {
+if (r && r.entity !== undefined && r.entity !== null && String(r.entity) !== '') { return String(r.entity); }
+var sel = el('company');
+if (sel && sel.value !== 'selected' && sel.value !== 'consolidated' && sel.selectedOptions && sel.selectedOptions[0]) {
+var t = String(sel.selectedOptions[0].text || '');
+var p = t.indexOf(' - ');
+return p > 0 ? t.slice(0, p) : t;
+}
+return '';
+}
+function cleanName(name, ent) {
+var t = String(name || '');
+if (ent) {
+var tag = ' [' + ent + ']';
+var i = t.lastIndexOf(tag);
+return i > -1 ? t.slice(0, i) : t;
+}
+var j = t.lastIndexOf(' [');
+return (j > -1 && t.charAt(t.length - 1) === ']') ? t.slice(0, j) : t;
+}
+function syncBucketSelect() {
+var sel = el('bucket');
+if (!sel) { return; }
+var BK = BKS();
+var sig = 'all|' + BK.map(function (b) { return b.key + ':' + b.label; }).join('|');
+if (sel.getAttribute('data-sig') === sig) { return; }
+var cur = S.bucket;
+var html = '<option value="all">All buckets</option>';
+BK.forEach(function (b) { html += '<option value="' + b.key + '">' + b.label + ' days</option>'; });
+sel.innerHTML = html;
+sel.setAttribute('data-sig', sig);
+var ok = false;
+for (var i = 0; i < sel.options.length; i++) { if (sel.options[i].value === cur) { ok = true; } }
+sel.value = ok ? cur : 'all';
+S.bucket = sel.value;
 }
 function filtered() {
-  var list = (S.data && S.data.accounts) ? S.data.accounts.slice() : [];
-  var q = S.q.trim().toLowerCase();
-  if (q) {
-    list = list.filter(function (r) {
-      return (String(r.code || '') + ' ' + String(r.name || '')).toLowerCase().indexOf(q) >= 0;
-    });
-  }
-  if (S.bucket !== 'all') {
-    list = list.filter(function (r) { return Math.abs(Number(r[S.bucket] || 0)) > 0.004; });
-  }
-  var k = S.sort;
-  var dir = S.dir;
-  list.sort(function (a, b) {
-    if (k === 'code' || k === 'name') {
-      return String(a[k] || '').localeCompare(String(b[k] || '')) * dir;
-    }
-    return ((Number(a[k]) || 0) - (Number(b[k]) || 0)) * dir;
-  });
-  return list;
+var list = (S.data && S.data.accounts) ? S.data.accounts.slice() : [];
+var q = S.q.trim().toLowerCase();
+if (q) {
+list = list.filter(function (r) {
+return (String(r.code || '') + ' ' + String(r.name || '') + ' ' + String(r.entity || '')).toLowerCase().indexOf(q) >= 0;
+});
+}
+if (S.bucket !== 'all') {
+list = list.filter(function (r) { return Math.abs(Number(r[S.bucket] || 0)) > 0.004; });
+}
+var k = S.sort;
+var dir = S.dir;
+list.sort(function (a, b) {
+if (k === 'code' || k === 'name' || k === 'entity') {
+return String(a[k] || '').localeCompare(String(b[k] || '')) * dir;
+}
+return ((Number(a[k]) || 0) - (Number(b[k]) || 0)) * dir;
+});
+return list;
 }
 function totalsOf(list) {
-  var t = { b1: 0, b2: 0, b3: 0, b4: 0, total: 0 };
-  var w = 0;
-  var a = 0;
-  list.forEach(function (r) {
-    t.b1 += Number(r.b1 || 0);
-    t.b2 += Number(r.b2 || 0);
-    t.b3 += Number(r.b3 || 0);
-    t.b4 += Number(r.b4 || 0);
-    t.total += Number(r.total || 0);
-    w += Number(r.average || 0) * Math.abs(Number(r.total || 0));
-    a += Math.abs(Number(r.total || 0));
-  });
-  t.average = a ? Math.round(w / a) : 0;
-  return t;
+var keys = bkeys();
+var t = { total: 0 };
+keys.forEach(function (k) { t[k] = 0; });
+var w = 0;
+var a = 0;
+list.forEach(function (r) {
+keys.forEach(function (k) { t[k] += Number(r[k] || 0); });
+t.total += Number(r.total || 0);
+w += Number(r.average || 0) * Math.abs(Number(r.total || 0));
+a += Math.abs(Number(r.total || 0));
+});
+t.average = a ? Math.round(w / a) : 0;
+return t;
 }
 function kpis(list, t) {
-  var colors = { b1: 'var(--green)', b2: 'var(--yellow)', b3: 'var(--orange)', b4: 'var(--red)' };
-  var labels = { b1: '0 - 30 DAYS', b2: '31 - 60 DAYS', b3: '61 - 90 DAYS', b4: 'OVER 90 DAYS' };
-  var h = '<div class="kpi big"><div class="t">TOTAL OUTSTANDING (EUR)</div><div class="v">' + fmt(t.total) + '</div>';
-  h += '<div class="s">' + list.length + ' suppliers - average ' + t.average + ' days</div></div>';
-  ['b1', 'b2', 'b3', 'b4'].forEach(function (k) {
-    var p = t.total ? Math.round(t[k] / t.total * 100) : 0;
-    var w = Math.max(0, Math.min(100, p));
-    h += '<div class="kpi"><div class="t">' + labels[k] + '</div>';
-    h += '<div class="v" style="color:' + colors[k] + '">' + fmt(t[k]) + '</div>';
-    h += '<div class="bar"><span style="width:' + w + '%;background:' + colors[k] + '"></span></div>';
-    h += '<div class="s">' + p + '% of outstanding</div></div>';
-  });
-  el('kpis').innerHTML = h;
+var BK = BKS();
+var four = ['var(--green)', 'var(--yellow)', 'var(--orange)', 'var(--red)'];
+var many = ['#12a150', '#7a9a2e', '#c58a12', '#e2611a', '#d7452a', '#c02d3a', '#a11226'];
+var isAP = (document.getElementById('dashboard') || {}).value !== 'ar';
+var who = isAP ? 'suppliers' : 'customers';
+var h = '<div class="kpi big"><div class="t">TOTAL OUTSTANDING (EUR)</div><div class="v">' + fmt(t.total) + '</div>';
+h += '<div class="s">' + list.length + ' ' + who + ' - average ' + t.average + ' days</div></div>';
+BK.forEach(function (b, i) {
+var col = (BK.length === 4) ? four[i] : many[Math.min(i, many.length - 1)];
+var p = t.total ? Math.round(t[b.key] / t.total * 100) : 0;
+var w = Math.max(0, Math.min(100, p));
+h += '<div class="kpi"><div class="t">' + b.label + ' DAYS</div>';
+h += '<div class="v" style="color:' + col + '">' + fmt(t[b.key]) + '</div>';
+h += '<div class="bar"><span style="width:' + w + '%;background:' + col + '"></span></div>';
+h += '<div class="s">' + p + '% of outstanding</div></div>';
+});
+el('kpis').innerHTML = h;
 }
 function draw() {
-  if (!S.data) { return; }
-  var list = filtered();
-  var t = totalsOf(list);
-  kpis(list, t);
-  var h = '<table><thead><tr>';
-  COLS.forEach(function (c) {
-    var on = S.sort === c[0];
-    var arrow = on ? (S.dir > 0 ? ' \u25b2' : ' \u25bc') : '';
-    h += '<th data-k="' + c[0] + '" class="' + (c[2] ? 'num' : 'txt') + (on ? ' on' : '') + '">' + c[1] + arrow + '</th>';
-  });
-  h += '</tr></thead><tbody>';
-  if (!list.length) {
-    h += '<tr><td colspan="8" class="state">No open purchase invoices for this selection.</td></tr>';
-  }
-  list.forEach(function (r) {
-    var risk = Math.abs(Number(r.b4 || 0)) > 0.004 ? ' risk' : '';
-    h += '<tr class="row' + risk + '" data-code="' + esc(r.code) + '">';
-    h += '<td class="mono">' + esc(r.code) + '</td><td>' + esc(r.name) + '</td>';
-    h += money(r.b1) + money(r.b2, 'warn') + money(r.b3, 'hot') + money(r.b4, 'bad') + money(r.total, 'strong');
-    h += '<td class="num">' + (r.average === null || r.average === undefined ? '' : r.average) + '</td></tr>';
-    if (S.open[r.code]) { h += detail(r); }
-  });
-  h += '</tbody><tfoot><tr><td>TOTAL</td><td>' + list.length + ' suppliers</td>';
-  h += money(t.b1) + money(t.b2) + money(t.b3) + money(t.b4) + money(t.total);
-  h += '<td class="num">' + t.average + '</td></tr></tfoot></table>';
-  var box = el('table');
-  box.className = '';
-  box.innerHTML = h;
-  bind(box);
+if (!S.data) { return; }
+syncBucketSelect();
+var list = filtered();
+var t = totalsOf(list);
+kpis(list, t);
+var CS = cols();
+var NC = CS.length;
+var keys = bkeys();
+var isAP = (document.getElementById('dashboard') || {}).value !== 'ar';
+var who = isAP ? 'suppliers' : 'customers';
+var h = '<table><thead><tr>';
+CS.forEach(function (c) {
+var on = S.sort === c[0];
+var arrow = on ? (S.dir > 0 ? ' \u25b2' : ' \u25bc') : '';
+h += '<th data-k="' + c[0] + '" class="' + (c[2] ? 'num' : 'txt') + (on ? ' on' : '') + '">' + c[1] + arrow + '</th>';
+});
+h += '</tr></thead><tbody>';
+if (!list.length) {
+h += '<tr><td colspan="' + NC + '" class="state">No open items for this selection.</td></tr>';
+}
+list.forEach(function (r) {
+var ent = entOf(r);
+var lastKey = keys[keys.length - 1];
+var risk = Math.abs(Number(r[lastKey] || 0)) > 0.004 ? ' risk' : '';
+h += '<tr class="row' + risk + '" data-code="' + esc(r.code) + '">';
+h += '<td class="mono">' + esc(r.code) + '</td>';
+h += '<td class="mono">' + esc(ent) + '</td>';
+h += '<td>' + esc(cleanName(r.name, ent)) + '</td>';
+keys.forEach(function (k, i) {
+var cls = '';
+if (keys.length === 4) { cls = ['', 'warn', 'hot', 'bad'][i]; }
+else { cls = (i <= 1) ? '' : (i === 2 ? 'warn' : (i === 3 ? 'hot' : 'bad')); }
+h += money(r[k], cls);
+});
+h += money(r.total, 'strong');
+h += '<td class="num">' + (r.average === null || r.average === undefined ? '' : r.average) + '</td></tr>';
+if (S.open[r.code]) { h += detail(r); }
+});
+h += '</tbody><tfoot><tr><td>TOTAL</td><td></td><td>' + list.length + ' ' + who + '</td>';
+keys.forEach(function (k) { h += money(t[k]); });
+h += money(t.total);
+h += '<td class="num">' + t.average + '</td></tr></tfoot></table>';
+var box = el('table');
+box.className = '';
+box.innerHTML = h;
+bind(box);
 }
 function bind(box) {
-  var ths = box.querySelectorAll('th[data-k]');
-  for (var i = 0; i < ths.length; i++) {
-    ths[i].onclick = function () {
-      var k = this.getAttribute('data-k');
-      if (S.sort === k) { S.dir = -S.dir; } else { S.sort = k; S.dir = (k === 'code' || k === 'name') ? 1 : -1; }
-      draw();
-    };
-  }
-  var trs = box.querySelectorAll('tr.row');
-  for (var j = 0; j < trs.length; j++) {
-    trs[j].onclick = function () {
-      var c = this.getAttribute('data-code');
-      if (S.open[c]) { delete S.open[c]; } else { S.open[c] = true; }
-      draw();
-    };
-  }
+var ths = box.querySelectorAll('th[data-k]');
+for (var i = 0; i < ths.length; i++) {
+ths[i].onclick = function () {
+var k = this.getAttribute('data-k');
+if (S.sort === k) { S.dir = -S.dir; } else { S.sort = k; S.dir = (k === 'code' || k === 'name' || k === 'entity') ? 1 : -1; }
+draw();
+};
+}
+var trs = box.querySelectorAll('tr.row');
+for (var j = 0; j < trs.length; j++) {
+trs[j].onclick = function () {
+var c = this.getAttribute('data-code');
+if (S.open[c]) { delete S.open[c]; } else { S.open[c] = true; }
+draw();
+};
+}
 }
 function detail(r) {
-  var its = r.items || [];
-  var h = '<tr class="detail"><td colspan="8"><table class="inner"><thead><tr>';
-  h += '<th>Invoice</th><th>Description</th><th>Your reference</th><th>Invoice date</th><th>Due date</th>';
-  h += '<th class="num">Days</th><th class="num">Amount</th></tr></thead><tbody>';
-  its.forEach(function (it) {
-    h += '<tr><td class="mono">' + esc(it.invoiceNumber) + '</td><td>' + esc(it.description) + '</td>';
-    h += '<td>' + esc(it.yourRef) + '</td><td>' + esc(it.invoiceDate) + '</td><td>' + esc(it.dueDate) + '</td>';
-    h += '<td class="num">' + (it.age === null || it.age === undefined ? '' : it.age) + '</td>';
-    h += money(it.amount) + '</tr>';
-  });
-  return h + '</tbody></table></td></tr>';
+var its = r.items || [];
+var h = '<tr class="detail"><td colspan="' + cols().length + '"><table class="inner"><thead><tr>';
+h += '<th>Invoice</th><th>Description</th><th>Your reference</th><th>Invoice date</th><th>Due date</th>';
+h += '<th class="num">Days</th><th class="num">Amount</th></tr></thead><tbody>';
+if (!its.length) {
+h += '<tr><td colspan="7" class="state">Exact does not deliver the single invoices for this account.</td></tr>';
+}
+its.forEach(function (it) {
+h += '<tr><td class="mono">' + esc(it.invoiceNumber) + '</td><td>' + esc(it.description) + '</td>';
+h += '<td>' + esc(it.yourRef) + '</td><td>' + esc(it.invoiceDate) + '</td><td>' + esc(it.dueDate) + '</td>';
+h += '<td class="num">' + (it.age === null || it.age === undefined ? '' : it.age) + '</td>';
+h += money(it.amount) + '</tr>';
+});
+return h + '</tbody></table></td></tr>';
 }
 function conn() {
   fetch('/api/status', { credentials: 'same-origin' }).then(function (r) {
@@ -318,13 +394,17 @@ setInterval(function () { conn(); load(); }, 300000);
     if (url.indexOf('/api/ageing-') > -1 && url.indexOf('division=selected') > -1) {
       var u = new URL(url, location.origin), ep = u.pathname, date = u.searchParams.get('date'), rt = u.searchParams.get('referTo');
       return (async function () {
-        var acc = [], T = { b1: 0, b2: 0, b3: 0, b4: 0, total: 0 }, n = 0, errs = [], per = [];
+        var acc = [], T = { total: 0 }, n = 0, errs = [], per = [], BKZ = null;
         for (var i = 0; i < ENT.length; i++) {
           var m = ENT[i], j = await getOne(ep, m[2], date, rt), t = j.totals || {};
-          ['b1', 'b2', 'b3', 'b4', 'total'].forEach(function (k) { T[k] += (Number(t[k]) || 0); });
+          if (!BKZ && j.buckets && j.buckets.length) { BKZ = j.buckets; }
+          var kk = BKZ ? BKZ.map(function (b) { return b.key; }) : ['b1', 'b2', 'b3', 'b4'];
+          kk.concat(['total']).forEach(function (k) { T[k] = (Number(T[k]) || 0) + (Number(t[k]) || 0); });
           n += Number(j.itemCount) || 0;
           if (j.__err) errs.push(m[1] + ': not available');
-          per.push({ region: m[0], human: m[1], name: m[3], b1: Number(t.b1) || 0, b2: Number(t.b2) || 0, b3: Number(t.b3) || 0, b4: Number(t.b4) || 0, total: Number(t.total) || 0, accounts: Number(j.itemCount) || 0 });
+          var pe = { region: m[0], human: m[1], name: m[3], total: Number(t.total) || 0, accounts: Number(j.itemCount) || 0 };
+          kk.forEach(function (k) { pe[k] = Number(t[k]) || 0; });
+          per.push(pe);
           (Array.isArray(j.accounts) ? j.accounts : []).forEach(function (a) { a.name = (a.name || '') + ' [' + m[1] + ']'; a.entity = m[1]; a.region = m[0]; acc.push(a); });
           await nap(250);
         }
@@ -332,7 +412,7 @@ setInterval(function () { conn(); load(); }, 300000);
         window.NUMA_PER_ENTITY = per;
         LAST = { totals: T, accounts: acc };
         SIG = '';
-        return jr({ referTo: rt, referenceDate: date, division: ENT.length + ' selected entities (HQ/DACH/WEST/SOUTH)', consolidated: true, currency: 'EUR', source: 'Exact Online', accounts: acc, totals: T, itemCount: n, errors: errs, lastUpdated: new Date().toISOString() });
+        return jr({ referTo: rt, referenceDate: date, division: ENT.length + ' selected entities (HQ/DACH/WEST/SOUTH)', consolidated: true, currency: 'EUR', source: 'Exact Online', buckets: BKZ, accounts: acc, totals: T, itemCount: n, errors: errs, lastUpdated: new Date().toISOString() });
       })();
     }
     var p = NF.call(window, input, init);
@@ -372,76 +452,85 @@ setInterval(function () { conn(); load(); }, 300000);
 ensureTabs();
 if (VIEW === 'summary') { renderSummary(); return; }
 fillSelect();
-    var tb = document.querySelector('table');
-    if (!tb) return;
-    var bs = document.getElementById('bucket');
-    if (bs && !document.getElementById('amount')) {
-      var w = document.createElement('div');
-      w.className = 'ctl';
-      var lab = document.createElement('label');
-      lab.setAttribute('for', 'amount');
-      lab.textContent = 'AMOUNT';
-      var s = document.createElement('select');
-      s.id = 'amount';
-      [['all', 'All amounts'], ['pos', 'Positive only (+)'], ['neg', 'Negative only (\u2212)']].forEach(function (o) {
-        var op = document.createElement('option');
-        op.value = o[0];
-        op.text = o[1];
-        s.appendChild(op);
-      });
-      s.value = AMT;
-      s.onchange = function () { AMT = s.value; SIG = ''; ui(); };
-      w.appendChild(lab);
-      w.appendChild(s);
-      bs.parentElement.parentElement.insertBefore(w, bs.parentElement.nextSibling);
-    }
-    [].slice.call(tb.querySelectorAll('thead th')).forEach(function (th) { if (th.textContent.indexOf('Over 90') > -1) th.textContent = th.textContent.replace('Over 90', '> 90'); });
-    var rows = [].slice.call(tb.querySelectorAll('tbody tr')).filter(function (tr) { return tr.children.length === 8; });
-    rows.forEach(function (tr) {
-      var v = pnum(tr.children[6].textContent);
-      tr.style.display = ((AMT === 'pos' && v < 0) || (AMT === 'neg' && v >= 0)) ? 'none' : '';
-    });
-    var D = LAST || { accounts: [], totals: null };
-    var use = (D.accounts || []).filter(function (a) { var t = Number(a.total) || 0; return AMT === 'all' || (AMT === 'pos' ? t >= 0 : t < 0); });
-    var S = [0, 0, 0, 0, 0];
-    if (AMT === 'all' && D.totals) {
-      S = [Number(D.totals.b1) || 0, Number(D.totals.b2) || 0, Number(D.totals.b3) || 0, Number(D.totals.b4) || 0, Number(D.totals.total) || 0];
-    } else {
-      use.forEach(function (a) { S[0] += Number(a.b1) || 0; S[1] += Number(a.b2) || 0; S[2] += Number(a.b3) || 0; S[3] += Number(a.b4) || 0; S[4] += Number(a.total) || 0; });
-    }
-    var sel = document.getElementById('company');
-    var isAP = (document.getElementById('dashboard') || {}).value === 'ap';
-    var who = isAP ? 'suppliers' : 'customers';
-    var cnt = use.length;
-    var tag = AMT === 'all' ? '' : (AMT === 'pos' ? ' \u00b7 positive only' : ' \u00b7 negative only');
-    var f = tb.querySelector('tfoot tr');
-    if (f && f.children.length === 8) {
-      var c = f.children;
-      c[0].textContent = 'TOTAL';
-      c[1].textContent = cnt + ' ' + who + tag;
-      [2, 3, 4, 5, 6].forEach(function (i, k) { c[i].textContent = eur(S[k]); c[i].style.color = S[k] < 0 ? '#1a1a18' : ''; });
-      c[7].textContent = '';
-      f.style.fontWeight = '700';
-    }
-    var cards = [].slice.call(document.querySelectorAll('#kpis .kpi'));
-    if (cards.length === 5) {
-      var ent = (sel && sel.value === 'selected') ? (ENT.length + ' entities') : ((sel && sel.selectedOptions[0]) ? sel.selectedOptions[0].text : '1 entity');
-      cards.forEach(function (k, i) {
-        var bar = k.querySelector('.bar');
-        if (bar) bar.remove();
-        var sub = k.querySelector('.s'), v = k.querySelector('.v'), t = k.querySelector('.t');
-        if (i === 0) {
-          if (v) v.textContent = eur(S[4]);
-          if (sub) sub.textContent = ent + ' \u00b7 ' + cnt + ' ' + who + tag;
-        } else {
-          var key = ['b1', 'b2', 'b3', 'b4'][i - 1];
-          if (v) v.textContent = eur(S[i - 1]);
-          if (sub) sub.textContent = use.filter(function (a) { return (Number(a[key]) || 0) !== 0; }).length + ' ' + who + ' in this bucket';
-          if (t && t.textContent.indexOf('OVER 90') > -1) t.textContent = '> 90 DAYS';
-        }
-      });
-    }
-  }
+detailTools();
+var tb = document.querySelector('#table table');
+if (!tb) return;
+var bs = document.getElementById('bucket');
+if (bs && !document.getElementById('amount')) {
+var w = document.createElement('div');
+w.className = 'ctl';
+var lab = document.createElement('label');
+lab.setAttribute('for', 'amount');
+lab.textContent = 'AMOUNT';
+var sa = document.createElement('select');
+sa.id = 'amount';
+[['all', 'All amounts'], ['pos', 'Positive only (+)'], ['neg', 'Negative only (\u2212)']].forEach(function (o) {
+var op = document.createElement('option');
+op.value = o[0];
+op.text = o[1];
+sa.appendChild(op);
+});
+sa.value = AMT;
+sa.onchange = function () { AMT = sa.value; SIG = ''; ui(); };
+w.appendChild(lab);
+w.appendChild(sa);
+bs.parentElement.parentElement.insertBefore(w, bs.parentElement.nextSibling);
+}
+var keys = bkeys();
+var NC = keys.length + 5;
+var iTot = keys.length + 3;
+var rows = [].slice.call(tb.querySelectorAll('tbody tr')).filter(function (tr) { return tr.children.length === NC; });
+rows.forEach(function (tr) {
+var v = pnum(tr.children[iTot].textContent);
+tr.style.display = ((AMT === 'pos' && v < 0) || (AMT === 'neg' && v >= 0)) ? 'none' : '';
+});
+var D = LAST || { accounts: [], totals: null };
+var use = (D.accounts || []).filter(function (a) { var t = Number(a.total) || 0; return AMT === 'all' || (AMT === 'pos' ? t >= 0 : t < 0); });
+var SUM = { total: 0 };
+keys.forEach(function (k) { SUM[k] = 0; });
+if (AMT === 'all' && D.totals) {
+keys.forEach(function (k) { SUM[k] = Number(D.totals[k]) || 0; });
+SUM.total = Number(D.totals.total) || 0;
+} else {
+use.forEach(function (a) {
+keys.forEach(function (k) { SUM[k] += Number(a[k]) || 0; });
+SUM.total += Number(a.total) || 0;
+});
+}
+var sel = document.getElementById('company');
+var isAP = (document.getElementById('dashboard') || {}).value !== 'ar';
+var who = isAP ? 'suppliers' : 'customers';
+var cnt = use.length;
+var tag = AMT === 'all' ? '' : (AMT === 'pos' ? ' \u00b7 positive only' : ' \u00b7 negative only');
+var f = tb.querySelector('tfoot tr');
+if (f && f.children.length === NC) {
+var c = f.children;
+c[0].textContent = 'TOTAL';
+c[1].textContent = '';
+c[2].textContent = cnt + ' ' + who + tag;
+keys.forEach(function (k, i) { c[3 + i].textContent = eur(SUM[k]); c[3 + i].style.color = SUM[k] < 0 ? '#1a1a18' : ''; });
+c[iTot].textContent = eur(SUM.total);
+c[NC - 1].textContent = '';
+f.style.fontWeight = '700';
+}
+var cards = [].slice.call(document.querySelectorAll('#kpis .kpi'));
+if (cards.length === keys.length + 1) {
+var ent = (sel && sel.value === 'selected') ? (ENT.length + ' entities') : ((sel && sel.selectedOptions[0]) ? sel.selectedOptions[0].text : '1 entity');
+cards.forEach(function (k, i) {
+var bar = k.querySelector('.bar');
+if (bar) bar.remove();
+var sub = k.querySelector('.s'), v = k.querySelector('.v');
+if (i === 0) {
+if (v) v.textContent = eur(SUM.total);
+if (sub) sub.textContent = ent + ' \u00b7 ' + cnt + ' ' + who + tag;
+} else {
+var key = keys[i - 1];
+if (v) v.textContent = eur(SUM[key]);
+if (sub) sub.textContent = use.filter(function (a) { return (Number(a[key]) || 0) !== 0; }).length + ' ' + who + ' in this bucket';
+}
+});
+}
+}
   setInterval(function () {
     var tb = document.querySelector('table tbody');
     if (!tb) { fillSelect(); return; }
@@ -509,13 +598,16 @@ summaryWrap.id = 'summaryWrap';
 summaryWrap.className = 'wrap';
 wrap.parentNode.insertBefore(summaryWrap, wrap.nextSibling);
 }
+var dt = document.getElementById('detTools');
 if (VIEW === 'summary') {
 if (controls) controls.style.display = 'none';
 if (wrap) wrap.style.display = 'none';
+if (dt) dt.style.display = 'none';
 if (summaryWrap) summaryWrap.style.display = '';
 } else {
 if (controls) controls.style.display = '';
 if (wrap) wrap.style.display = '';
+if (dt) dt.style.display = 'flex';
 if (summaryWrap) summaryWrap.style.display = 'none';
 }
 }
@@ -656,36 +748,139 @@ var acc = (LAST && LAST.accounts) ? LAST.accounts : [];
 var isAP = xIsAP();
 var who = isAP ? 'Suppliers' : 'Customers';
 var one = isAP ? 'Vendor' : 'Customer';
+var BK = BKS();
+var keys = bkeys();
 var by = (el('referto') && el('referto').value === 'duedate') ? 'due date' : 'invoice date';
 var title = 'Ageing analysis: ' + (isAP ? 'A/P' : 'A/R') + ' - consolidated summary of ' + ENT.length + ' entities';
 var line2 = 'Reference date ' + xDate() + ' - aged by ' + by + ' - all amounts converted to EUR';
 var line3 = 'Exported from the Numa dashboard on ' + new Date().toLocaleString('nb-NO') + ' - live data of Exact Online';
+var head = ['Entity', 'Entity name', 'Region', who];
+BK.forEach(function (b) { head.push(b.label); });
+head.push('Outstanding');
+head.push('Average days');
+var dhead = ['Entity', 'Entity name', 'Code', one];
+BK.forEach(function (b) { dhead.push(b.label); });
+dhead.push('Outstanding');
+dhead.push('Average days');
 var sum = [];
 sum.push([{ v: title, s: 5 }]);
 sum.push([{ v: line2 }]);
 sum.push([{ v: line3 }]);
 sum.push([]);
-sum.push(['Entity', 'Entity name', 'Region', who, '0 - 30', '31 - 60', '61 - 90', 'Over 90', 'Outstanding', 'Average days'].map(function (t) { return { v: t, s: 1 }; }));
+sum.push(head.map(function (t) { return { v: t, s: 1 }; }));
 var det = [];
 det.push([{ v: title + ' - per ' + one.toLowerCase(), s: 5 }]);
 det.push([{ v: line2 }]);
 det.push([]);
-det.push(['Entity', 'Entity name', 'Code', one, '0 - 30', '31 - 60', '61 - 90', 'Over 90', 'Outstanding', 'Average days'].map(function (t) { return { v: t, s: 1 }; }));
+det.push(dhead.map(function (t) { return { v: t, s: 1 }; }));
 ENT.forEach(function (m) {
 var list = entityAccounts(m[1]);
 var t = totalsOf(list);
-sum.push([{ v: String(m[1]) }, { v: m[3] }, { v: m[0] }, { n: list.length }, { n: t.b1, s: 2 }, { n: t.b2, s: 2 }, { n: t.b3, s: 2 }, { n: t.b4, s: 2 }, { n: t.total, s: 2 }, { n: t.average || 0 }]);
+var row = [{ v: String(m[1]) }, { v: m[3] }, { v: m[0] }, { n: list.length }];
+keys.forEach(function (k) { row.push({ n: t[k], s: 2 }); });
+row.push({ n: t.total, s: 2 });
+row.push({ n: t.average || 0 });
+sum.push(row);
 list.forEach(function (a) {
-det.push([{ v: String(m[1]) }, { v: m[3] }, { v: String(a.code || '') }, { v: vendorLabel(a.name, m[1]) }, { n: Number(a.b1) || 0, s: 2 }, { n: Number(a.b2) || 0, s: 2 }, { n: Number(a.b3) || 0, s: 2 }, { n: Number(a.b4) || 0, s: 2 }, { n: Number(a.total) || 0, s: 2 }, { n: Number(a.average) || 0 }]);
+var dr = [{ v: String(m[1]) }, { v: m[3] }, { v: String(a.code || '') }, { v: vendorLabel(a.name, m[1]) }];
+keys.forEach(function (k) { dr.push({ n: Number(a[k]) || 0, s: 2 }); });
+dr.push({ n: Number(a.total) || 0, s: 2 });
+dr.push({ n: Number(a.average) || 0 });
+det.push(dr);
 });
 });
 var g = totalsOf(acc);
-function totRow(label2) { return [{ v: 'TOTAL', s: 4 }, { v: label2, s: 4 }, { v: '', s: 4 }, { n: acc.length, s: 4 }, { n: g.b1, s: 3 }, { n: g.b2, s: 3 }, { n: g.b3, s: 3 }, { n: g.b4, s: 3 }, { n: g.total, s: 3 }, { n: g.average || 0, s: 4 }]; }
+function totRow() {
+var r = [{ v: 'TOTAL', s: 4 }, { v: ENT.length + ' entities', s: 4 }, { v: '', s: 4 }, { n: acc.length, s: 4 }];
+keys.forEach(function (k) { r.push({ n: g[k], s: 3 }); });
+r.push({ n: g.total, s: 3 });
+r.push({ n: g.average || 0, s: 4 });
+return r;
+}
 sum.push([]);
-sum.push(totRow(ENT.length + ' entities'));
+sum.push(totRow());
 det.push([]);
-det.push(totRow(ENT.length + ' entities'));
+det.push(totRow());
 return { sum: sum, det: det, isAP: isAP, who: who, one: one, rows: acc.length };
+}
+// The list of the Details view, exactly as it stands on the screen: the same
+// filters, the same order, one row per account with the entity next to it.
+function xDetailData() {
+var isAP = xIsAP();
+var one = isAP ? 'Supplier' : 'Customer';
+var BK = BKS();
+var keys = bkeys();
+var list = filtered().filter(function (a) {
+var t = Number(a.total) || 0;
+return AMT === 'all' || (AMT === 'pos' ? t >= 0 : t < 0);
+});
+var by = (el('referto') && el('referto').value === 'duedate') ? 'due date' : 'invoice date';
+var selEl = document.getElementById('company');
+var scope = (selEl && selEl.value === 'selected') ? ('all ' + ENT.length + ' entities') : ((selEl && selEl.selectedOptions[0]) ? selEl.selectedOptions[0].text : 'one entity');
+var title = 'Ageing analysis: ' + (isAP ? 'A/P' : 'A/R') + ' - details of ' + scope;
+var head = ['Code', 'Entity', one, ];
+BK.forEach(function (b) { head.push(b.label); });
+head.push('Outstanding');
+head.push('Average days');
+var rows = [];
+rows.push([{ v: title, s: 5 }]);
+rows.push([{ v: 'Reference date ' + xDate() + ' - aged by ' + by + ' - all amounts converted to EUR' }]);
+rows.push([{ v: 'Exported from the Numa dashboard on ' + new Date().toLocaleString('nb-NO') + ' - ' + list.length + ' rows, the search and the filters of the screen included' }]);
+rows.push([]);
+rows.push(head.map(function (t) { return { v: t, s: 1 }; }));
+list.forEach(function (a) {
+var ent = entOf(a);
+var r = [{ v: String(a.code || '') }, { v: ent }, { v: cleanName(a.name, ent) }];
+keys.forEach(function (k) { r.push({ n: Number(a[k]) || 0, s: 2 }); });
+r.push({ n: Number(a.total) || 0, s: 2 });
+r.push({ n: Number(a.average) || 0 });
+rows.push(r);
+});
+var t = totalsOf(list);
+var tot = [{ v: 'TOTAL', s: 4 }, { v: '', s: 4 }, { v: list.length + ' ' + one.toLowerCase() + 's', s: 4 }];
+keys.forEach(function (k) { tot.push({ n: t[k], s: 3 }); });
+tot.push({ n: t.total, s: 3 });
+tot.push({ n: t.average || 0, s: 4 });
+rows.push([]);
+rows.push(tot);
+var widths = [14, 10, 44];
+BK.forEach(function () { widths.push(15); });
+widths.push(17);
+widths.push(14);
+return { rows: rows, widths: widths, isAP: isAP, count: list.length };
+}
+function xExportDetail() {
+var d = xDetailData();
+var bytes = xBuild([{ name: 'Details', rows: d.rows, widths: d.widths }]);
+xSave(new Blob([bytes], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }), 'numa-' + (d.isAP ? 'ap' : 'ar') + '-ageing-details-' + xDate() + '.xlsx');
+}
+function xExportDetailCsv() {
+var d = xDetailData();
+xSave(new Blob([xCsvBody(d.rows)], { type: 'text/csv;charset=utf-8' }), 'numa-' + (d.isAP ? 'ap' : 'ar') + '-ageing-details-' + xDate() + '.csv');
+}
+var XB1 = 'background:#fbcfd9;border:1px solid #f19ab1;color:#1a1a18;padding:9px 16px;border-radius:8px;font-weight:700;font-size:12px;cursor:pointer;';
+var XB2 = 'background:#ffffff;border:1px solid #f0d7de;color:#1a1a18;padding:9px 16px;border-radius:8px;font-weight:700;font-size:12px;cursor:pointer;';
+function detailTools() {
+var wrap = document.querySelector('.wrap');
+if (!wrap || !wrap.parentNode) { return; }
+var bar = document.getElementById('detTools');
+if (!bar) {
+bar = document.createElement('div');
+bar.id = 'detTools';
+bar.style.cssText = 'display:flex;align-items:center;gap:10px;margin:0 24px 10px;';
+wrap.parentNode.insertBefore(bar, wrap);
+}
+bar.style.display = (VIEW === 'details') ? 'flex' : 'none';
+var mode = xIsAP() ? 'ap' : 'ar';
+if (bar.getAttribute('data-mode') !== mode) {
+bar.setAttribute('data-mode', mode);
+bar.innerHTML = '<button type="button" id="detXlsx" style="' + XB1 + '">Export Excel</button>' +
+'<button type="button" id="detCsv" style="' + XB2 + '">Export CSV</button>' +
+'<span style="color:#6f6a6b;font-size:12px;">the ' + (mode === 'ap' ? 'A/P' : 'A/R') + ' list exactly as it stands here, filters included</span>';
+var a = document.getElementById('detXlsx'), b = document.getElementById('detCsv');
+if (a) a.onclick = function () { xExportDetail(); };
+if (b) b.onclick = function () { xExportDetailCsv(); };
+}
 }
 function xSheets() {
 var d = xSummaryData();
@@ -700,21 +895,23 @@ var x = xSheets();
 var bytes = xBuild(x.sheets);
 xSave(new Blob([bytes], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }), xFileName(x.d, 'xlsx'));
 }
-function xExportCsv() {
-var x = xSheets();
+function xCsvBody(rows) {
 var NLC = String.fromCharCode(13) + String.fromCharCode(10);
 var lines = [];
-x.d.sum.forEach(function (row) {
+rows.forEach(function (row) {
 lines.push(row.map(function (c) {
 if (!c) return '';
 if (c.n !== undefined && c.n !== null) { return String(Math.round(Number(c.n) * 100) / 100).split('.').join(','); }
-var s = String(c.v === undefined || c.v === null ? '' : c.v);
-if (s.indexOf(';') > -1 || s.indexOf(String.fromCharCode(34)) > -1) { return String.fromCharCode(34) + s.split(String.fromCharCode(34)).join(String.fromCharCode(34) + String.fromCharCode(34)) + String.fromCharCode(34); }
-return s;
+var t = String(c.v === undefined || c.v === null ? '' : c.v);
+if (t.indexOf(';') > -1 || t.indexOf(String.fromCharCode(34)) > -1) { return String.fromCharCode(34) + t.split(String.fromCharCode(34)).join(String.fromCharCode(34) + String.fromCharCode(34)) + String.fromCharCode(34); }
+return t;
 }).join(';'));
 });
-var body = String.fromCharCode(0xFEFF) + lines.join(NLC);
-xSave(new Blob([body], { type: 'text/csv;charset=utf-8' }), xFileName(x.d, 'csv'));
+return String.fromCharCode(0xFEFF) + lines.join(NLC);
+}
+function xExportCsv() {
+var x = xSheets();
+xSave(new Blob([xCsvBody(x.d.sum)], { type: 'text/csv;charset=utf-8' }), xFileName(x.d, 'csv'));
 }
 window.__numaSummaryExcel = { build: function () { return xBuild(xSheets().sheets); }, save: xExportExcel, data: xSummaryData };
 function exportBar() {
@@ -741,6 +938,14 @@ var acc = (LAST && LAST.accounts) ? LAST.accounts : [];
 if (!acc.length) { box.innerHTML = '<div class="state">Loading live data from Exact Online...</div>'; return; }
 var isAP = (document.getElementById('dashboard') || {}).value !== 'ar';
 var who = isAP ? 'Suppliers' : 'Customers';
+var one = isAP ? 'Vendor' : 'Customer';
+var BK = BKS();
+var keys = bkeys();
+var NC = keys.length + 3;
+function cls(i) {
+if (keys.length === 4) { return ['', 'warn', 'hot', 'bad'][i]; }
+return (i <= 1) ? '' : (i === 2 ? 'warn' : (i === 3 ? 'hot' : 'bad'));
+}
 var rows = ENT.map(function (m) {
 var list = entityAccounts(m[1]);
 var t = totalsOf(list);
@@ -749,37 +954,45 @@ return { human: m[1], region: m[0], name: m[3], count: list.length, t: t, list: 
 var grand = totalsOf(acc);
 var h = '<table><thead><tr>';
 h += '<th class="txt">Entity</th><th class="num">' + who + '</th>';
-h += '<th class="num">0 - 30</th><th class="num">31 - 60</th><th class="num">61 - 90</th><th class="num">&gt; 90</th><th class="num">Outstanding</th><th class="num">Average</th>';
+BK.forEach(function (b) { h += '<th class="num">' + b.label + '</th>'; });
+h += '<th class="num">Outstanding</th><th class="num">Average</th>';
 h += '</tr></thead><tbody>';
 rows.forEach(function (r) {
-var risk = Math.abs(r.t.b4 || 0) > 0.004 ? ' risk' : '';
+var lastKey = keys[keys.length - 1];
+var risk = Math.abs(r.t[lastKey] || 0) > 0.004 ? ' risk' : '';
 var activeStyle = (ACTIVE_ENT === r.human) ? ' style="background:#fdeaee;box-shadow:inset 3px 0 0 #f19ab1;"' : '';
 h += '<tr class="row' + risk + '" data-ent="' + esc(r.human) + '"' + activeStyle + '>';
 h += '<td>' + esc(r.human) + ' - ' + esc(r.name) + '</td><td class="num"><span class="numaDrop" data-ent="' + esc(r.human) + '" style="cursor:pointer;text-decoration:underline;color:#1a1a18;font-weight:700;">' + r.count + ' ' + (ACTIVE_ENT === r.human ? '\u25b4' : '\u25be') + '</span></td>';
-h += money(r.t.b1) + money(r.t.b2, 'warn') + money(r.t.b3, 'hot') + money(r.t.b4, 'bad') + money(r.t.total, 'strong');
+keys.forEach(function (k, i) { h += money(r.t[k], cls(i)); });
+h += money(r.t.total, 'strong');
 h += '<td class="num">' + (r.t.average || 0) + '</td></tr>';
 if (ACTIVE_ENT === r.human) {
-h += '<tr class="detail"><td colspan="8"><table class="inner"><thead><tr>';
-h += '<th>' + (isAP ? 'Vendor' : 'Customer') + '</th><th class="num">0 - 30</th><th class="num">31 - 60</th><th class="num">61 - 90</th><th class="num">&gt; 90</th><th class="num">Outstanding</th><th class="num">Average</th></tr></thead><tbody>';
+h += '<tr class="detail"><td colspan="' + NC + '"><table class="inner"><thead><tr>';
+h += '<th>' + one + '</th>';
+BK.forEach(function (b) { h += '<th class="num">' + b.label + '</th>'; });
+h += '<th class="num">Outstanding</th><th class="num">Average</th></tr></thead><tbody>';
 if (!r.list.length) {
-h += '<tr><td colspan="7" class="state">No open items for this entity.</td></tr>';
+h += '<tr><td colspan="' + (keys.length + 3) + '" class="state">No open items for this entity.</td></tr>';
 }
 r.list.forEach(function (a) {
 h += '<tr><td>' + esc(vendorLabel(a.name, r.human)) + '</td>';
-h += money(a.b1) + money(a.b2, 'warn') + money(a.b3, 'hot') + money(a.b4, 'bad') + money(a.total, 'strong');
+keys.forEach(function (k, i) { h += money(a[k], cls(i)); });
+h += money(a.total, 'strong');
 h += '<td class="num">' + (a.average === null || a.average === undefined ? '' : a.average) + '</td></tr>';
 });
 h += '</tbody>';
 if (r.list.length) {
 h += '<tfoot><tr class="subtotal"><td><b>Subtotal ' + esc(r.human) + ' - ' + esc(r.name) + '</b></td>';
-h += money(r.t.b1) + money(r.t.b2) + money(r.t.b3) + money(r.t.b4) + money(r.t.total);
+keys.forEach(function (k) { h += money(r.t[k]); });
+h += money(r.t.total);
 h += '<td class="num"><b>' + (r.t.average || 0) + '</b></td></tr></tfoot>';
 }
 h += '</table></td></tr>';
 }
 });
 h += '</tbody><tfoot><tr><td>TOTAL</td><td>' + rows.length + ' entities - ' + acc.length + ' ' + who.toLowerCase() + '</td>';
-h += money(grand.b1) + money(grand.b2) + money(grand.b3) + money(grand.b4) + money(grand.total);
+keys.forEach(function (k) { h += money(grand[k]); });
+h += money(grand.total);
 h += '<td class="num">' + grand.average + '</td></tr></tfoot></table>';
 box.innerHTML = exportBar() + h;
 bindExport(box);
@@ -802,12 +1015,11 @@ kpis(list, t);
 var isAP = (document.getElementById('dashboard') || {}).value !== 'ar';
 var who = isAP ? 'suppliers' : 'customers';
 var cards = document.querySelectorAll('#kpis .kpi');
-var keys = ['b1', 'b2', 'b3', 'b4'];
+var keys = bkeys();
 for (var i = 0; i < cards.length; i++) {
 var bar = cards[i].querySelector('.bar');
 if (bar) bar.remove();
 var sub = cards[i].querySelector('.s');
-var lab = cards[i].querySelector('.t');
 if (i === 0) {
 var entLabel;
 if (ACTIVE_ENT) {
@@ -819,8 +1031,8 @@ entLabel = ENT.length + ' entities';
 }
 if (sub) sub.textContent = entLabel + ' \u00b7 ' + list.length + ' ' + who;
 } else {
-if (lab && lab.textContent.indexOf('OVER 90') > -1) lab.textContent = '> 90 DAYS';
 var key = keys[i - 1];
+if (!key) { continue; }
 var cnt = list.filter(function (a) { return Math.abs(Number(a[key]) || 0) > 0.004; }).length;
 if (sub) sub.textContent = cnt + ' ' + who + ' in this bucket';
 }
@@ -871,7 +1083,7 @@ function showIC() {
   var controls = document.querySelector('.controls'); if (controls) controls.style.display = 'none';
   var kpisEl = document.getElementById('kpis'); if (kpisEl) kpisEl.style.display = 'none';
   var wrap = document.querySelector('.wrap'); if (wrap) wrap.style.display = 'none';
-  var summaryWrap = document.getElementById('summaryWrap'); if (summaryWrap) summaryWrap.style.display = 'none';
+  var summaryWrap = document.getElementById('summaryWrap'); if (summaryWrap) summaryWrap.style.display = 'none'; var dtb = document.getElementById('detTools'); if (dtb) dtb.style.display = 'none';
   var sel = document.getElementById('company'); if (sel) sel.disabled = true; if (sel && sel.options[0] && sel.options[0].value === 'selected') sel.options[0].text = 'Consolidated (' + ICENT.length + ' selected entities)';
   var asof = document.getElementById('asof'); if (asof) asof.style.display = 'none';
   ensureIC();
