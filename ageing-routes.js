@@ -129,29 +129,53 @@ module.exports = function (getToken) {
     }
     throw last;
   }
-  async function fetchAll(division, path, h, maxPages) {
+  // A list is read page by page (Exact hands out only 60 rows per call) and a
+  // big entity like 900 has thousands of open invoices, so the reading runs in
+  // the background: the request waits a while, then reports how far it got and
+  // the dashboard asks again. Finished lists stay in memory for a few minutes,
+  // so every other view of the same entity is instant.
+  const jobs = {};
+  function startJob(key, division, path, h, maxPages) {
+    const job = { at: Date.now(), pages: 0, rows: [], done: false, err: null };
+    jobs[key] = job;
+    (async function () {
+      let url = BASE + '/' + division + '/' + path;
+      try {
+        while (url && job.pages < (maxPages || 200)) {
+          const r = await getEx(url, h);
+          const d = r.data && r.data.d ? r.data.d : r.data;
+          const part = d && d.results ? d.results : (Array.isArray(d) ? d : []);
+          job.rows = job.rows.concat(part);
+          url = d && d.__next ? d.__next : null;
+          job.pages = job.pages + 1;
+        }
+        rowsCache[key] = { at: Date.now(), rows: job.rows };
+      } catch (e) {
+        job.err = e;
+        if (job.rows.length) { rowsCache[key] = { at: Date.now(), rows: job.rows }; }
+      }
+      job.done = true;
+    })();
+    return job;
+  }
+  async function fetchAll(division, path, h, maxPages, waitMs) {
     const key = division + '|' + path;
     const hit = rowsCache[key];
     if (hit && (Date.now() - hit.at) < ROWS_TTL_MS) { return hit.rows; }
-    let url = BASE + '/' + division + '/' + path;
-    let rows = [];
-    let pages = 0;
-    try {
-      while (url && pages < (maxPages || 25)) {
-        const r = await getEx(url, h);
-        const d = r.data && r.data.d ? r.data.d : r.data;
-        const part = d && d.results ? d.results : (Array.isArray(d) ? d : []);
-        rows = rows.concat(part);
-        url = d && d.__next ? d.__next : null;
-        pages = pages + 1;
-      }
-    } catch (e) {
-      if (rows.length) { return rows; }
+    const running = jobs[key] && !jobs[key].done ? jobs[key] : null;
+    const job = running || startJob(key, division, path, h, maxPages);
+    const until = Date.now() + (waitMs === undefined ? 40000 : waitMs);
+    while (!job.done && Date.now() < until) { await sleep(400); }
+    if (job.done) {
+      if (job.rows.length) { return job.rows; }
       if (hit) { return hit.rows; }
-      throw e;
+      if (job.err) { throw job.err; }
+      return job.rows;
     }
-    rowsCache[key] = { at: Date.now(), rows: rows };
-    return rows;
+    if (hit) { return hit.rows; }
+    const e = new Error('Still reading from Exact Online');
+    e.loading = { pages: job.pages, rows: job.rows.length };
+    throw e;
   }
   function toDate(v) {
     if (!v) return null;
@@ -257,13 +281,16 @@ module.exports = function (getToken) {
     list.sort(function (x, y) { return String(x.code).localeCompare(String(y.code)); });
     return { accounts: list, totals: totals };
   }
-  async function fetchRowsFor(division, sources, h, errors) {
-    let rows = null; let source = null;
-    for (let i = 0; i < sources.length && !rows; i++) {
-      try { rows = await fetchAll(division, sources[i], h, 40); source = sources[i]; }
-      catch (e) { errors[division + ':' + sources[i]] = e.response && e.response.data ? e.response.data : e.message; rows = null; }
+  async function fetchRowsFor(division, sources, h, errors, waitMs) {
+    let rows = null; let source = null; let loading = null;
+    for (let i = 0; i < sources.length && !rows && !loading; i++) {
+      try { rows = await fetchAll(division, sources[i], h, 200, waitMs); source = sources[i]; }
+      catch (e) {
+        if (e && e.loading) { loading = e.loading; rows = null; break; }
+        errors[division + ':' + sources[i]] = e.response && e.response.data ? e.response.data : e.message; rows = null;
+      }
     }
-    return { rows: rows, source: source };
+    return { rows: rows, source: source, loading: loading };
   }
   router.get('/api/divisions', async function (req, res) {
     const h = headers();
@@ -316,12 +343,25 @@ module.exports = function (getToken) {
     out.division = consolidated ? 'consolidated' : targets[0];
     const map = {}; let totalRows = 0; let gotAny = false;
     const stats = { skipped: 0 };
+    // The whole answer gets about 40 seconds; whatever is not read by then keeps
+    // reading in the background and the dashboard asks again a few seconds later.
+    const budgetUntil = Date.now() + 40000;
+    let waiting = null;
     for (let i = 0; i < targets.length; i++) {
       const cur = await divisionCurrency(targets[i], h);
-      const r = await fetchRowsFor(targets[i], sources, h, out.errors);
+      const left = Math.max(1500, budgetUntil - Date.now());
+      const r = await fetchRowsFor(targets[i], sources, h, out.errors, left);
+      if (r.loading) {
+        if (!waiting) { waiting = { pages: 0, rows: 0, entities: 0 }; }
+        waiting.pages += r.loading.pages; waiting.rows += r.loading.rows; waiting.entities += 1;
+      }
       if (r.rows) { gotAny = true; if (!out.source) out.source = r.source; totalRows += r.rows.length; accumulate(map, r.rows, referTo, refDate, cur, rates, edges, allow, stats); }
     }
-    if (!gotAny) return res.status(502).json(out);
+    if (waiting) { out.loading = waiting; }
+    if (!gotAny) {
+      if (waiting) { return res.status(202).json(out); }
+      return res.status(502).json(out);
+    }
     const done = finalize(map, edges);
     out.accounts = done.accounts; out.totals = done.totals; out.itemCount = totalRows; out.skippedRows = stats.skipped;
     res.json(out);
