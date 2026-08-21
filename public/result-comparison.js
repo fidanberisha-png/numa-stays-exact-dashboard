@@ -103,13 +103,13 @@
 
   function line(label, value, dim) {
     return '<div style="display:flex;justify-content:space-between;gap:16px;padding:4px 0;font-size:0.95em;color:' +
-      (dim ? '#8a6e7d' : '#3d2a36') + '"><span>' + label + '</span><span style="font-weight:600;color:' +
-      (dim ? '#8a6e7d' : '#e6007e') + '">' + fmt(value) + '</span></div>';
+      (dim ? '#6f6a6b' : '#2b2b28') + '"><span>' + label + '</span><span style="font-weight:600;color:' +
+      (dim ? '#6f6a6b' : '#1a1a18') + '">' + fmt(value) + '</span></div>';
   }
 
   function block(title, idx, highlight) {
     return '<div style="flex:1;min-width:230px;padding:14px 18px;border-radius:8px;background:' +
-      (highlight ? '#f2d9e6' : 'transparent') + ';border:1px solid #f2d9e6">' +
+      (highlight ? '#f0d7de' : 'transparent') + ';border:1px solid #f0d7de">' +
       '<div class="kpi-title" style="margin-bottom:10px">' + title + '</div>' +
       line(state.year, conv(sum(state.year, idx, state.until)), false) +
       line(prevYear(), conv(sum(prevYear(), idx, state.until)), true) +
@@ -123,9 +123,9 @@
     return '<div class="chart-card" id="exactResultCard" style="margin-bottom:30px">' +
       '<div style="display:flex;flex-wrap:wrap;align-items:center;gap:12px">' +
         '<div class="chart-title" style="margin:0">Result vs previous year - Exact Online</div>' +
-        '<div id="erTotals" style="margin-left:auto;color:#3d2a36;font-size:0.95em"></div>' +
+        '<div id="erTotals" style="margin-left:auto;color:#2b2b28;font-size:0.95em"></div>' +
       '</div>' +
-      '<div style="color:#8a6e7d;font-size:0.85em;margin:6px 0 18px">' + COMPANY +
+      '<div style="color:#6f6a6b;font-size:0.85em;margin:6px 0 18px">' + COMPANY +
         ' - figures from Exact Online, reporting currency NOK (kr)</div>' +
       '<div class="filters" style="margin-bottom:20px">' +
         '<div class="filter-group"><label>Financial year:</label><select id="erYear"></select></div>' +
@@ -136,11 +136,11 @@
           '<option value="DKK">DKK</option><option value="NOK">NOK</option></select></div>' +
         '<div class="filter-group" id="erRateGroup"><label>Rate to EUR:</label>' +
           '<input id="erRate" type="number" step="0.0001" min="0" style="width:110px;padding:6px;border-radius:6px;' +
-          'border:1px solid #f2d9e6;background:#ffffff;color:#3d2a36"></div>' +
+          'border:1px solid #f0d7de;background:#ffffff;color:#2b2b28"></div>' +
       '</div>' +
       '<div id="erBlocks" style="display:flex;flex-wrap:wrap;gap:12px;margin-bottom:24px"></div>' +
       '<div style="height:340px"><canvas id="exactResultChart"></canvas></div>' +
-      '<div style="text-align:center;color:#8a6e7d;margin-top:10px">Result per period</div>' +
+      '<div style="text-align:center;color:#6f6a6b;margin-top:10px">Result per period</div>' +
     '</div>';
   }
 
@@ -162,12 +162,12 @@
         datasets: [
           {
             label: String(state.year), data: series(state.year),
-            borderColor: '#e6007e', backgroundColor: '#e6007e',
+            borderColor: '#e46a8b', backgroundColor: '#f19ab1',
             pointRadius: 4, pointBackgroundColor: '#ffffff', borderWidth: 2, tension: 0
           },
           {
             label: String(prevYear()), data: series(prevYear()),
-            borderColor: '#8a6e7d', backgroundColor: '#8a6e7d',
+            borderColor: '#6f6a6b', backgroundColor: '#6f6a6b',
             pointRadius: 4, pointBackgroundColor: '#ffffff', borderWidth: 2, tension: 0
           }
         ]
@@ -176,7 +176,7 @@
         responsive: true,
         maintainAspectRatio: false,
         plugins: {
-          legend: { labels: { color: '#7a6672' } },
+          legend: { labels: { color: '#6f6a6b' } },
           tooltip: {
             callbacks: {
               label: function (c) { return c.dataset.label + ': ' + fmt(c.parsed.y); }
@@ -184,8 +184,8 @@
           }
         },
         scales: {
-          x: { ticks: { color: '#7a6672' }, grid: { color: '#f2d9e6' } },
-          y: { ticks: { color: '#7a6672', callback: function (v) { return short(v); } }, grid: { color: '#f2d9e6' } }
+          x: { ticks: { color: '#6f6a6b' }, grid: { color: '#f0d7de' } },
+          y: { ticks: { color: '#6f6a6b', callback: function (v) { return short(v); } }, grid: { color: '#f0d7de' } }
         }
       }
     });
