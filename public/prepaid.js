@@ -46,6 +46,12 @@
     return (Number(n) || 0).toLocaleString('de-DE', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' €';
   }
   function n0(n) { return (Number(n) || 0).toLocaleString('de-DE'); }
+    // The year the schedule is counted against. With a blank financial year the
+    // server says which year that is, so every label keeps telling the truth.
+    function baseY() {
+        var b = (S.data && S.data.baseYear) ? Number(S.data.baseYear) : 0;
+        return b || Number(S.year) || new Date().getFullYear();
+    }
   function division(code) {
     for (var i = 0; i < ENT.length; i++) { if (String(ENT[i][1]) === String(code)) return ENT[i][2]; }
     return null;
@@ -99,7 +105,11 @@
       '.ghead .gpre{font-weight:700}' +
       '.ghead.gtot{background:#fff2f8;border:1px solid #f3d5e4;border-radius:10px;cursor:default;font-weight:700}' +
       '.gbody{padding:6px 10px 10px 10px;background:#fff2f8}' +
-      '.ctl input[type=date],.ctl input[type=text],.ctl select{min-width:150px}' +
+      '.btab td{padding:6px 8px}' +
+        '.btab tr.bop td{background:#fff2f8;font-weight:600}' +
+        '.btab tr.btot td{background:#fff2f8;font-weight:700;border-top:2px solid #e6007e}' +
+        '.btab tr.bcl td{background:#fdeaf3;font-weight:700;color:#e6007e}' +
+        '.ctl input[type=date],.ctl input[type=text],.ctl select{min-width:150px}' +
       '</style>';
     document.head.insertAdjacentHTML('beforeend', extra);
   }
@@ -113,7 +123,7 @@
       });
       opts += '</optgroup>';
     });
-    var yopts = '';
+    var yopts = '<option value=""></option>';
     YEARS.forEach(function (y) { yopts += '<option value="' + y + '">' + y + '</option>'; });
     document.body.innerHTML = [
       '<header>',
@@ -297,38 +307,64 @@
   function kpis() {
     var box = el('kpis');
     if (!box) return;
-    var y = Number(S.year) || 0;
+    var y = baseY();
     var rows = rowsNow();
     var t = sums(rows);
     box.innerHTML = [
       kpi('INVOICES', n0(t.count), 'one amount per invoice'),
-      kpi('TOTAL PAID IN ADVANCE', eur(t.total), 'booked on ' + CODE + ' in ' + y),
+      kpi('TOTAL PAID IN ADVANCE', eur(t.total), 'booked on ' + CODE + (S.year ? ' in ' + y : ' in all years')),
       kpi('EXPENSED ' + y, eur(t.expensed), 'the months that are already used'),
       kpi('PREPAID ' + (y + 1), eur(t.prepaid), 'still to be carried to ' + (y + 1))
     ].join('');
   }
 
+  // The balance of the account, drawn like the journal report of Exact:
+  // opening balance, then every journal, then the total and the closing
+  // balance. The numbers come from the server, nothing is recalculated here.
   function journalBox() {
-    var box = el('jbox');
-    if (!box) return;
-    var js = (S.data && S.data.journals) ? S.data.journals : [];
-    if (!js.length) { box.innerHTML = ''; return; }
-    var body = '';
-    js.forEach(function (j) {
-      body += '<tr>' +
-        '<td>' + esc(j.code) + '</td>' +
-        '<td>' + esc(j.description || '') + '</td>' +
-        '<td class="r">' + n0(j.count) + '</td>' +
-        '<td class="r">' + eur(j.debit) + '</td>' +
-        '<td class="r">' + eur(j.credit) + '</td>' +
-        '<td class="r">' + eur(j.net) + '</td>' +
-        '</tr>';
-    });
-    box.innerHTML = '<div class="pcard"><h3>Journals on account ' + CODE + '</h3>' +
-      '<table class="jtab"><thead><tr><th>Journal</th><th>Name</th><th class="r">Lines</th><th class="r">Debit</th><th class="r">Credit</th><th class="r">Net</th></tr></thead><tbody>' +
-      body + '</tbody></table>' +
-      '<div class="muted" style="margin-top:6px">Every journal is read in the same way and they all stand in the same list. Use the JOURNAL filter to look at one of them on its own.</div>' +
-      '</div>';
+      var box = el('jbox');
+      if (!box) return;
+      var b = (S.data && S.data.balance) ? S.data.balance : null;
+      var js = (b && b.journals) ? b.journals : ((S.data && S.data.journals) ? S.data.journals : []);
+      if (!b && !js.length) { box.innerHTML = ''; return; }
+      function cell(n) { return (Number(n) || 0) === 0 ? '' : eur(n); }
+      var body = '';
+      if (b) {
+          body += '<tr class="bop"><td>Opening balance</td><td></td>' +
+              '<td class="r">' + cell(b.opening.debit) + '</td>' +
+              '<td class="r">' + cell(b.opening.credit) + '</td>' +
+              '<td class="r">' + eur(b.opening.amount) + '</td></tr>';
+      }
+      js.forEach(function (j) {
+          body += '<tr>' +
+              '<td>' + esc(j.code) + (j.description ? ' - ' + esc(j.description) : '') + '</td>' +
+              '<td class="r">' + n0(j.count) + '</td>' +
+              '<td class="r">' + cell(j.debit) + '</td>' +
+              '<td class="r">' + cell(j.credit) + '</td>' +
+              '<td class="r">' + eur(j.net) + '</td></tr>';
+      });
+      if (b) {
+          body += '<tr class="btot"><td>Total</td><td></td>' +
+              '<td class="r">' + cell(b.total.debit) + '</td>' +
+              '<td class="r">' + cell(b.total.credit) + '</td>' +
+              '<td class="r">' + eur(b.total.amount) + '</td></tr>';
+          body += '<tr class="bcl"><td>Closing balance</td><td></td>' +
+              '<td class="r">' + cell(b.closing.debit) + '</td>' +
+              '<td class="r">' + cell(b.closing.credit) + '</td>' +
+              '<td class="r">' + eur(b.closing.amount) + '</td></tr>';
+      }
+      var head = '<thead><tr><th>Journal</th><th class="r">Lines</th>' +
+          '<th class="r">Debit</th><th class="r">Credit</th><th class="r">Amount</th></tr></thead>';
+      var when = S.year ? ('financial year ' + baseY()) : 'all financial years';
+      var tail = (b && b.allYears)
+          ? 'With a blank financial year there is no opening balance: every year already stands in the total, so the closing balance is the whole account.'
+          : 'The opening balance is everything booked on ' + CODE + ' before ' + baseY() + '. Opening balance plus the journals gives the total, and that total is the closing balance, exactly like the journal report of Exact.';
+      if (b && b.openingFailed) tail = 'Exact did not give the opening balance this time, so only the journals of the year stand here. ' + tail;
+      box.innerHTML = '<div class="pcard"><h3>Balance of account ' + CODE + ' - ' + esc(when) + '</h3>' +
+          '<table class="jtab btab">' + head + '<tbody>' + body + '</tbody></table>' +
+          '<div class="muted" style="margin-top:6px">' + esc(tail) +
+          ' Every journal is read in the same way and they all stand in the same list. Use the JOURNAL filter to look at one of them on its own.</div>' +
+          '</div>';
   }
 
   // The rows are put together per account of the Accc column, closed by
@@ -338,7 +374,7 @@
     journalBox();
     var w = el('wrap');
     if (!w) return;
-    var y = Number(S.year) || 0;
+    var y = baseY();
     if (S.err) {
       w.innerHTML = '<div class="state" style="color:#d92d20">' + esc(S.err) + '</div>';
       leftBox(); note(); return;
@@ -351,7 +387,7 @@
     var asof = el('asof');
     if (asof) {
       asof.textContent = 'Prepaid expenses on G/L account ' + CODE + ' - ' + entName(S.entity) +
-        ' - financial year ' + y + ' - amortised until ' + (S.data.cut || '') +
+        (S.year ? ' - financial year ' + y : ' - all financial years') + ' - amortised until ' + (S.data.cut || '') +
         ' - read from Exact Online at ' + String(S.data.lastUpdated || '').slice(0, 19).replace('T', ' ');
     }
     if (!rows.length) {
@@ -476,7 +512,7 @@
   function csv() {
     var rows = rowsNow();
     if (!rows.length) return;
-    var y = Number(S.year) || 0;
+    var y = baseY();
     var cols = ['No.', 'Date', 'Cost', 'Accc', 'Description', 'Invoice', 'Total', 'Start Date', 'End Date',
       'Total Months', 'Months Used ' + y, 'Months Left ' + (y + 1), 'Monthly Amort', 'Expensed ' + y, 'Prepaid ' + (y + 1), 'Journal'];
     function cell(v) {
@@ -494,7 +530,7 @@
     var blob = new Blob([out], { type: 'text/csv;charset=utf-8' });
     var a = document.createElement('a');
     a.href = URL.createObjectURL(blob);
-    a.download = 'prepaid-' + CODE + '-' + S.entity + '-' + S.year + '.csv';
+    a.download = 'prepaid-' + CODE + '-' + S.entity + '-' + (S.year || 'all-years') + '.csv';
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
@@ -505,7 +541,7 @@
   function note() {
     var n = el('note');
     if (!n) return;
-    var y = Number(S.year) || 0;
+    var y = baseY();
     var txt = 'Information. How the numbers are built: ' +
       '(1) every line of G/L account ' + CODE + ' of the chosen entity and financial year is read live from Exact Online, out of all journals together; ' +
       '(2) every journal is read in the same way, none of them is treated differently and nothing is left out because of the journal it stands in; ' +
@@ -513,7 +549,8 @@
       '(4) the period comes from the text of the booking, for example (01-01-2026 - 31-12-2026), and the months are counted from the first to the last month, both included; ' +
       '(5) the monthly amount is the invoice amount divided by those months and the months used are the months up to the cut off, that is the end of ' + y + ', today, or the date chosen above; ' +
       '(6) expensed is the monthly amount times the months used and the prepaid amount is the invoice amount minus the expensed part, so a row always adds up to the amount that stands in Exact; ' +
-      '(7) amounts are never rounded up or down and never corrected, a line without a period is not guessed but shown apart at the bottom, and the credit lines (the releases) stay out of the schedule and are visible in the journal overview.';
+      '(7) amounts are never rounded up or down and never corrected, a line without a period is not guessed but shown apart at the bottom, and the credit lines (the releases) stay out of the schedule and are visible in the journal overview; ' +
+        '(8) the card above the list follows the journal report of Exact: the opening balance of ' + CODE + ', then every journal with its debit and its credit, then the total and the closing balance, and the financial year can be left blank to read every year at once.';
     n.textContent = txt;
   }
 
