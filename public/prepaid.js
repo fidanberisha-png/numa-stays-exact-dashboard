@@ -324,6 +324,10 @@
   function journalBox() {
       var box = el('jbox');
       if (!box) return;
+      // With a blank financial year there is no opening balance and no closing
+      // balance to show, so the whole card stays away and the page starts with
+      // the invoices themselves.
+      if (!S.year) { box.innerHTML = ''; return; }
       var b = (S.data && S.data.balance) ? S.data.balance : null;
       var js = (b && b.journals) ? b.journals : ((S.data && S.data.journals) ? S.data.journals : []);
       if (!b && !js.length) { box.innerHTML = ''; return; }
