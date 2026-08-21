@@ -37,7 +37,7 @@ function today() {
 function shell() {
   document.body.innerHTML = [
     '<header>',
-    '<div class="brand">Numa Stays</div>',
+    '<div class="brand">Numa</div>',
     '<select class="company" id="company" title="Entity"><option value="consolidated">Consolidated (all entities)</option><option value="300">300 - Numa Norge AS</option></select>',
     '<select class="company" id="dashboard" title="Dashboards"><option value="ap">Dashboards: AP Ageing</option><option value="ar">Dashboards: AR Ageing</option><option value="ic">Dashboards: InterCompany</option><option value=\"accrued\">Dashboards: Accrued</option><option value=\"prepaid\">Dashboards: PrePaid</option></select>',
     '<span class="pill" id="conn">Checking connection</span>',
@@ -419,7 +419,7 @@ fillSelect();
       var c = f.children;
       c[0].textContent = 'TOTAL';
       c[1].textContent = cnt + ' ' + who + tag;
-      [2, 3, 4, 5, 6].forEach(function (i, k) { c[i].textContent = eur(S[k]); c[i].style.color = S[k] < 0 ? '#d1006f' : ''; });
+      [2, 3, 4, 5, 6].forEach(function (i, k) { c[i].textContent = eur(S[k]); c[i].style.color = S[k] < 0 ? '#1a1a18' : ''; });
       c[7].textContent = '';
       f.style.fontWeight = '700';
     }
@@ -478,8 +478,8 @@ paintTabs();
 function paintTabs() {
 var bSum = document.getElementById('tabSummary'), bDet = document.getElementById('tabDetails');
 if (!bSum || !bDet) return;
-var on = 'background:#e6007e;border:1px solid #e6007e;color:#ffffff;padding:8px 16px;border-radius:8px;font-weight:700;font-size:13px;cursor:pointer;';
-var off = 'background:transparent;border:1px solid #f2d9e6;color:#8a6e7d;padding:8px 16px;border-radius:8px;font-weight:700;font-size:13px;cursor:pointer;';
+var on = 'background:#fbcfd9;border:1px solid #f19ab1;color:#1a1a18;padding:8px 16px;border-radius:8px;font-weight:700;font-size:13px;cursor:pointer;';
+var off = 'background:transparent;border:1px solid #f0d7de;color:#6f6a6b;padding:8px 16px;border-radius:8px;font-weight:700;font-size:13px;cursor:pointer;';
 bSum.style.cssText = VIEW === 'summary' ? on : off;
 bDet.style.cssText = VIEW === 'details' ? on : off;
 }
@@ -550,9 +550,9 @@ h += '<th class="num">0 - 30</th><th class="num">31 - 60</th><th class="num">61 
 h += '</tr></thead><tbody>';
 rows.forEach(function (r) {
 var risk = Math.abs(r.t.b4 || 0) > 0.004 ? ' risk' : '';
-var activeStyle = (ACTIVE_ENT === r.human) ? ' style="background:#fff0f7;box-shadow:inset 3px 0 0 #e6007e;"' : '';
+var activeStyle = (ACTIVE_ENT === r.human) ? ' style="background:#fdeaee;box-shadow:inset 3px 0 0 #f19ab1;"' : '';
 h += '<tr class="row' + risk + '" data-ent="' + esc(r.human) + '"' + activeStyle + '>';
-h += '<td>' + esc(r.human) + ' - ' + esc(r.name) + '</td><td class="num"><span class="numaDrop" data-ent="' + esc(r.human) + '" style="cursor:pointer;text-decoration:underline;color:#e6007e;font-weight:700;">' + r.count + ' ' + (ACTIVE_ENT === r.human ? '\u25b4' : '\u25be') + '</span></td>';
+h += '<td>' + esc(r.human) + ' - ' + esc(r.name) + '</td><td class="num"><span class="numaDrop" data-ent="' + esc(r.human) + '" style="cursor:pointer;text-decoration:underline;color:#1a1a18;font-weight:700;">' + r.count + ' ' + (ACTIVE_ENT === r.human ? '\u25b4' : '\u25be') + '</span></td>';
 h += money(r.t.b1) + money(r.t.b2, 'warn') + money(r.t.b3, 'hot') + money(r.t.b4, 'bad') + money(r.t.total, 'strong');
 h += '<td class="num">' + (r.t.average || 0) + '</td></tr>';
 if (ACTIVE_ENT === r.human) {
@@ -654,8 +654,8 @@ function numaStyle() { if (document.getElementById('numaICStyle')) return; var s
   box.id = 'icWrap';
   box.style.cssText = 'display:none;padding:0 24px 24px;';
   box.innerHTML = '<div style="display:flex;align-items:center;gap:12px;margin:10px 0;">' +
-    '<button id="icRun" type="button" style="background:#e6007e;border:1px solid #e6007e;color:#ffffff;padding:10px 18px;border-radius:8px;font-weight:700;font-size:13px;cursor:pointer;">Run report</button>' +
-    '<span id="icStatus" style="color:#8a6e7d;font-size:13px;"></span>' +
+    '<button id="icRun" type="button" style="background:#fbcfd9;border:1px solid #f19ab1;color:#1a1a18;padding:10px 18px;border-radius:8px;font-weight:700;font-size:13px;cursor:pointer;">Run report</button>' +
+    '<span id="icStatus" style="color:#6f6a6b;font-size:13px;"></span>' +
     '</div>' +
     '<div id="icResults"></div>';
   wrap.parentNode.insertBefore(box, wrap.nextSibling);
@@ -770,7 +770,7 @@ function icInRange(code) {
             else if (p.type === 'subtotal') { h += '<th class="num" style="font-weight:700;">' + esc(p.name) + '</th>'; }
             else { h += '<th class="num"></th>'; }
       });
-      IC_BUCKETS.forEach(function (b) { h += '<th class="num" style="color:#8a6e7d;">' + esc(b[1]) + '</th>'; }); h += '<th class="num" style="font-weight:700;">TOTAL</th>'; h += '</tr></thead><tbody>';
+      IC_BUCKETS.forEach(function (b) { h += '<th class="num" style="color:#6f6a6b;">' + esc(b[1]) + '</th>'; }); h += '<th class="num" style="font-weight:700;">TOTAL</th>'; h += '</tr></thead><tbody>';
       plan.forEach(function (rowP) {
             if (rowP.type === 'blank') {
                     h += '<tr><td colspan="' + (plan.length + 2 + IC_BUCKETS.length) + '">&nbsp;</td></tr>';
@@ -800,7 +800,7 @@ function icInRange(code) {
             h += '<div class="note" style="margin-top:10px;color:#b45309;">Errors: ' + esc(errors.join(' | ')) + '</div>';
       }
       if (false && unmatched && unmatched.length) {
-            h += '<div style="margin-top:16px;"><div style="color:#8a6e7d;font-size:13px;margin-bottom:6px;">Accounts that did not automatically match one of the ' + ICENT.length + ' entities (' + unmatched.length + '):</div>';
+            h += '<div style="margin-top:16px;"><div style="color:#6f6a6b;font-size:13px;margin-bottom:6px;">Accounts that did not automatically match one of the ' + ICENT.length + ' entities (' + unmatched.length + '):</div>';
             h += '<table class="inner"><thead><tr><th>Source entity</th><th>Code</th><th>Description</th><th class="num">Amount</th></tr></thead><tbody>';
             unmatched.forEach(function (u) {
                     h += '<tr><td>' + esc(u.source) + '</td><td class="mono">' + esc(u.glCode) + '</td><td>' + esc(u.glDescription) + '</td>' + money(u.amount) + '</tr>';
