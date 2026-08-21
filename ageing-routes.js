@@ -207,6 +207,29 @@ module.exports = function (getToken) {
     out.accounts = done.accounts; out.totals = done.totals; out.itemCount = totalRows;
     res.json(out);
   }
+  // Diagnostic: the raw rows of the list Exact keeps behind the ageing report,
+  // so the fields Exact really delivers can be read instead of guessed.
+  router.get('/api/ageing-raw', async function (req, res) {
+  const h = headers();
+  if (!h) return res.status(401).json({ error: 'Not authenticated' });
+  const division = req.query.division ? String(req.query.division) : null;
+  if (!division) return res.status(400).json({ error: 'division is required' });
+  const which = String(req.query.which || 'ap');
+  const one = String(req.query.source || '');
+  const sources = one ? [one] : (which === 'ar' ? AR_SOURCES : AP_SOURCES);
+  const limit = Math.max(1, Math.min(20, parseInt(String(req.query.limit || '3'), 10) || 3));
+  const errors = {};
+  for (let i = 0; i < sources.length; i++) {
+  try {
+  const rows = await fetchAll(division, sources[i], h, 1);
+  const fields = rows.length ? Object.keys(rows[0]) : [];
+  return res.json({ division: division, source: sources[i], count: rows.length, fields: fields, rows: rows.slice(0, limit) });
+  } catch (e) {
+  errors[sources[i]] = (e.response && e.response.data) ? String(JSON.stringify(e.response.data)).slice(0, 300) : e.message;
+  }
+  }
+  return res.status(502).json({ error: 'no source worked', errors: errors });
+  });
   router.get('/api/ageing-ap', function (req, res) { return handleAgeing(req, res, AP_SOURCES); });
   router.get('/api/ageing-ar', function (req, res) { return handleAgeing(req, res, AR_SOURCES); });
   return router;
