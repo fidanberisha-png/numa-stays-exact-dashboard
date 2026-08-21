@@ -77,16 +77,26 @@ function load() {
   }).then(function (res) {
     if (!res.ok || (res.j && res.j.error)) { fail(res.j); return; }
     S.data = res.j;
+    S.retried = 0;
     S.open = {};
     draw();
     stamp();
   }).catch(function (e) { fail({ error: String(e) }); });
+}
+function busy(j) {
+  try { return JSON.stringify(j || {}).indexOf('429') >= 0; } catch (e) { return false; }
 }
 function fail(j) {
   var box = el('table');
   box.className = 'state';
   if (j && j.error === 'Not authenticated') {
     box.innerHTML = 'Not connected to Exact Online. Click <b>Connect Exact Online</b> at the top, then press Refresh.';
+  } else if (busy(j)) {
+    // Exact Online only allows about 60 calls per minute per company. A big
+    // entity right after the consolidated view can run into that, so the
+    // dashboard says so in plain words and tries again by itself once.
+    box.innerHTML = 'Exact Online is busy right now (rate limit reached). Trying again in a moment...';
+    if (!S.retried) { S.retried = 1; setTimeout(function () { load(); }, 12000); }
   } else {
     box.innerHTML = 'Could not load the ageing data.<br>' + esc(JSON.stringify(j));
   }
