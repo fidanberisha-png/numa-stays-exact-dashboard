@@ -60,7 +60,7 @@ module.exports = function (getToken) {
   }
   async function getCurrentDivision(h) {
     if (currentDivisionCache) return currentDivisionCache;
-    const r = await axios.get(BASE + '/current/Me?$select=CurrentDivision', { headers: h });
+    const r = await getEx(BASE + '/current/Me?$select=CurrentDivision', h);
     currentDivisionCache = r.data.d.results[0].CurrentDivision;
     return currentDivisionCache;
   }
@@ -69,7 +69,7 @@ module.exports = function (getToken) {
     const cur = await getCurrentDivision(h);
     // Do NOT $select (the Division OData model varies, e.g. no HID); fetch all fields and pick safely.
     const url = BASE + '/' + cur + '/system/Divisions?$orderby=Code';
-    const r = await axios.get(url, { headers: h });
+    const r = await getEx(url, h);
     const d = r.data && r.data.d ? r.data.d : r.data;
     const rows = (d && d.results) ? d.results : (Array.isArray(d) ? d : []);
     divisionsCache = rows.map(function (x) {
@@ -88,18 +88,69 @@ module.exports = function (getToken) {
       return (found && found.currency) ? found.currency : 'EUR';
     } catch (e) { return 'EUR'; }
   }
+  // ---- Exact Online throttle, 429 retries and a short row cache -----------
+  // Exact allows only about 60 calls per company per minute. A big entity like
+  // 900 needs several pages, so a consolidated view can eat the whole minute
+  // and the next entity gets '429 Too Many Requests'. Therefore the calls are
+  // queued, a 429 is retried with a short backoff, every finished list is kept
+  // for a few minutes and, if Exact still refuses, the rows already collected
+  // (or the last known list) are used instead of showing an empty screen.
+  const CALL_LOG = [];
+  const MAX_PER_MIN = 58;
+  const ROWS_TTL_MS = 10 * 60 * 1000;
+  const rowsCache = {};
+  function sleep(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
+  async function slot() {
+    for (let i = 0; i < 12; i++) {
+      const now = Date.now();
+      while (CALL_LOG.length && (now - CALL_LOG[0]) > 60000) { CALL_LOG.shift(); }
+      if (CALL_LOG.length < MAX_PER_MIN) { CALL_LOG.push(now); return; }
+      await sleep(1000);
+    }
+    CALL_LOG.push(Date.now());
+  }
+  async function getEx(url, h) {
+    let wait = 1200;
+    let last = null;
+    for (let i = 0; i < 4; i++) {
+      await slot();
+      try { return await axios.get(url, { headers: h, timeout: 45000 }); }
+      catch (e) {
+        last = e;
+        const st = e.response ? e.response.status : 0;
+        if (st !== 429 && st !== 502 && st !== 503) throw e;
+        if (i === 3) throw e;
+        const ra = Number(e.response && e.response.headers ? e.response.headers['retry-after'] : 0);
+        let ms = ra > 0 ? ra * 1000 : wait;
+        if (ms > 8000) { ms = 8000; }
+        await sleep(ms);
+        wait = wait * 2;
+      }
+    }
+    throw last;
+  }
   async function fetchAll(division, path, h, maxPages) {
+    const key = division + '|' + path;
+    const hit = rowsCache[key];
+    if (hit && (Date.now() - hit.at) < ROWS_TTL_MS) { return hit.rows; }
     let url = BASE + '/' + division + '/' + path;
     let rows = [];
     let pages = 0;
-    while (url && pages < (maxPages || 25)) {
-      const r = await axios.get(url, { headers: h });
-      const d = r.data && r.data.d ? r.data.d : r.data;
-      const part = d && d.results ? d.results : (Array.isArray(d) ? d : []);
-      rows = rows.concat(part);
-      url = d && d.__next ? d.__next : null;
-      pages = pages + 1;
+    try {
+      while (url && pages < (maxPages || 25)) {
+        const r = await getEx(url, h);
+        const d = r.data && r.data.d ? r.data.d : r.data;
+        const part = d && d.results ? d.results : (Array.isArray(d) ? d : []);
+        rows = rows.concat(part);
+        url = d && d.__next ? d.__next : null;
+        pages = pages + 1;
+      }
+    } catch (e) {
+      if (rows.length) { return rows; }
+      if (hit) { return hit.rows; }
+      throw e;
     }
+    rowsCache[key] = { at: Date.now(), rows: rows };
     return rows;
   }
   function toDate(v) {
