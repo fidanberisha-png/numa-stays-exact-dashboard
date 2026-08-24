@@ -475,7 +475,9 @@ setInterval(function () { conn(); load(); }, 300000);
   function pickedEnt() { var p = getPick(); return ENT.filter(function (m) { return p.indexOf(String(m[2])) > -1; }); }
   function pickLabel() { var n = getPick().length; return 'Consolidated (' + n + (n === 1 ? ' selected entity)' : ' selected entities)'); }
   function pickBtnLabel() { var n = getPick().length; return 'Entities: ' + n + ' of ' + ENT.length + ' \u25be'; }
-  function ensurePicker(sel) { return; /* Entities selector removed */
+  function ensurePicker(sel) {
+    var __dsh = document.getElementById('dashboard');
+    if (__dsh && __dsh.value === 'ic') { var __w0 = document.getElementById('entPickWrap'); if (__w0) { __w0.style.display = 'none'; } return; }
     var old = document.getElementById('entPickBtn');
     if (old) { old.textContent = pickBtnLabel(); return; }
     var wrap = document.createElement('span');
@@ -1191,6 +1193,7 @@ function numaStyle() { if (document.getElementById('numaICStyle')) return; var s
 }
 function showIC() {
   ensureTabs();
+  var __ep = document.getElementById('entPickWrap'); if (__ep) __ep.style.display = 'none';
   var tabs = document.getElementById('numaTabs'); if (tabs) tabs.style.display = 'none';
   var controls = document.querySelector('.controls'); if (controls) controls.style.display = 'none';
   var kpisEl = document.getElementById('kpis'); if (kpisEl) kpisEl.style.display = 'none';
@@ -1202,6 +1205,7 @@ function showIC() {
   document.getElementById('icWrap').style.display = '';
 }
 function hideIC() {
+  var __ep2 = document.getElementById('entPickWrap'); if (__ep2) __ep2.style.display = 'inline-block';
   var icWrap = document.getElementById('icWrap'); if (icWrap) icWrap.style.display = 'none';
   var tabs = document.getElementById('numaTabs'); if (tabs) tabs.style.display = '';
   var asof = document.getElementById('asof'); if (asof) asof.style.display = '';
