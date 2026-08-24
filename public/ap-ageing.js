@@ -485,10 +485,10 @@ setInterval(function () { conn(); load(); }, 300000);
     btn.id = 'entPickBtn';
     btn.type = 'button';
     btn.textContent = pickBtnLabel();
-    btn.style.cssText = 'background:#fbcfd9;color:#1a1a18;border:1px solid #f4a9bd;border-radius:10px;padding:8px 14px;font:inherit;font-size:13px;font-weight:600;cursor:pointer;';
+    btn.style.cssText = 'background:#1e3a8a;color:#ffffff;border:1px solid #1e40af;border-radius:10px;padding:8px 14px;font:inherit;font-size:13px;font-weight:600;cursor:pointer;';
     var pan = document.createElement('div');
     pan.id = 'entPickPanel';
-    pan.style.cssText = 'display:none;position:absolute;z-index:80;top:118%;left:0;min-width:340px;max-height:62vh;overflow:auto;background:#fff;border:1px solid #f4a9bd;border-radius:14px;box-shadow:0 14px 36px rgba(26,26,24,.18);padding:14px;text-align:left;';
+    pan.style.cssText = 'display:none;position:absolute;z-index:80;top:118%;left:0;min-width:340px;max-height:62vh;overflow:auto;background:#fff;border:1px solid #1e40af;border-radius:14px;box-shadow:0 14px 36px rgba(26,26,24,.18);padding:14px;text-align:left;';
     wrap.appendChild(btn);
     wrap.appendChild(pan);
     if (sel.parentNode) { sel.parentNode.insertBefore(wrap, sel.nextSibling); }
@@ -510,10 +510,10 @@ setInterval(function () { conn(); load(); }, 300000);
         h += '<label style="display:block;padding:3px 4px;font-size:13px;cursor:pointer;"><input type="checkbox" class="entPick" value="' + m[2] + '"' + on + ' style="margin-right:8px;">' + esc(m[1] + ' - ' + m[3]) + '</label>';
       });
     });
-    h += '<div style="display:flex;gap:8px;align-items:center;margin-top:14px;border-top:1px solid #f6dde4;padding-top:12px;">';
-    h += '<button type="button" id="entAll" style="background:#fff;color:#1a1a18;border:1px solid #f4a9bd;border-radius:8px;padding:6px 12px;font:inherit;font-size:13px;cursor:pointer;">All</button>';
-    h += '<button type="button" id="entNone" style="background:#fff;color:#1a1a18;border:1px solid #f4a9bd;border-radius:8px;padding:6px 12px;font:inherit;font-size:13px;cursor:pointer;">None</button>';
-    h += '<button type="button" id="entApply" style="background:#e6007e;color:#fff;border:1px solid #e6007e;border-radius:8px;padding:6px 14px;font:inherit;font-size:13px;cursor:pointer;margin-left:auto;">Apply</button></div>';
+    h += '<div style="display:flex;gap:8px;align-items:center;margin-top:14px;border-top:1px solid #eef2fb;padding-top:12px;">';
+    h += '<button type="button" id="entAll" style="background:#fff;color:#1a1a18;border:1px solid #1e40af;border-radius:8px;padding:6px 12px;font:inherit;font-size:13px;cursor:pointer;">All</button>';
+    h += '<button type="button" id="entNone" style="background:#fff;color:#1a1a18;border:1px solid #1e40af;border-radius:8px;padding:6px 12px;font:inherit;font-size:13px;cursor:pointer;">None</button>';
+    h += '<button type="button" id="entApply" style="background:#0f2557;color:#fff;border:1px solid #0f2557;border-radius:8px;padding:6px 14px;font:inherit;font-size:13px;cursor:pointer;margin-left:auto;">Apply</button></div>';
     pan.innerHTML = h;
     function boxes() { return [].slice.call(pan.querySelectorAll('.entPick')); }
     pan.querySelector('#entAll').onclick = function () { boxes().forEach(function (c) { c.checked = true; }); };
@@ -679,8 +679,8 @@ paintTabs();
 function paintTabs() {
 var bSum = document.getElementById('tabSummary'), bDet = document.getElementById('tabDetails');
 if (!bSum || !bDet) return;
-var on = 'background:#fbcfd9;border:1px solid #f19ab1;color:#1a1a18;padding:8px 16px;border-radius:8px;font-weight:700;font-size:13px;cursor:pointer;';
-var off = 'background:transparent;border:1px solid #f0d7de;color:#6f6a6b;padding:8px 16px;border-radius:8px;font-weight:700;font-size:13px;cursor:pointer;';
+var on = 'background:#1e3a8a;border:1px solid #1e40af;color:#ffffff;padding:8px 16px;border-radius:8px;font-weight:700;font-size:13px;cursor:pointer;';
+var off = 'background:transparent;border:1px solid #c7d5ef;color:#6f6a6b;padding:8px 16px;border-radius:8px;font-weight:700;font-size:13px;cursor:pointer;';
 bSum.style.cssText = VIEW === 'summary' ? on : off;
 bDet.style.cssText = VIEW === 'details' ? on : off;
 }
@@ -970,8 +970,8 @@ function xExportDetailCsv() {
 var d = xDetailData();
 xSave(new Blob([xCsvBody(d.rows)], { type: 'text/csv;charset=utf-8' }), 'numa-' + (d.isAP ? 'ap' : 'ar') + '-ageing-details-' + xDate() + '.csv');
 }
-var XB1 = 'background:#fbcfd9;border:1px solid #f19ab1;color:#1a1a18;padding:9px 16px;border-radius:8px;font-weight:700;font-size:12px;cursor:pointer;';
-var XB2 = 'background:#ffffff;border:1px solid #f0d7de;color:#1a1a18;padding:9px 16px;border-radius:8px;font-weight:700;font-size:12px;cursor:pointer;';
+var XB1 = 'background:#1e3a8a;border:1px solid #1e40af;color:#ffffff;padding:9px 16px;border-radius:8px;font-weight:700;font-size:12px;cursor:pointer;';
+var XB2 = 'background:#ffffff;border:1px solid #c7d5ef;color:#1a1a18;padding:9px 16px;border-radius:8px;font-weight:700;font-size:12px;cursor:pointer;';
 function detailTools() {
 var wrap = document.querySelector('.wrap');
 if (!wrap || !wrap.parentNode) { return; }
@@ -1028,8 +1028,8 @@ xSave(new Blob([xCsvBody(x.d.sum)], { type: 'text/csv;charset=utf-8' }), xFileNa
 window.__numaSummaryExcel = { build: function () { return xBuild(xSheets().sheets); }, save: xExportExcel, data: xSummaryData };
 function exportBar() {
 var isAP = xIsAP();
-var s1 = 'background:#fbcfd9;border:1px solid #f19ab1;color:#1a1a18;padding:9px 16px;border-radius:8px;font-weight:700;font-size:12px;cursor:pointer;';
-var s2 = 'background:#ffffff;border:1px solid #f0d7de;color:#1a1a18;padding:9px 16px;border-radius:8px;font-weight:700;font-size:12px;cursor:pointer;';
+var s1 = 'background:#1e3a8a;border:1px solid #1e40af;color:#ffffff;padding:9px 16px;border-radius:8px;font-weight:700;font-size:12px;cursor:pointer;';
+var s2 = 'background:#ffffff;border:1px solid #c7d5ef;color:#1a1a18;padding:9px 16px;border-radius:8px;font-weight:700;font-size:12px;cursor:pointer;';
 var h = '<div id=' + XQ + 'sumTools' + XQ + ' style=' + XQ + 'display:flex;align-items:center;gap:10px;margin:2px 0 12px;' + XQ + '>';
 h += '<button type=' + XQ + 'button' + XQ + ' id=' + XQ + 'sumXlsx' + XQ + ' style=' + XQ + s1 + XQ + '>Export Excel</button>';
 h += '<button type=' + XQ + 'button' + XQ + ' id=' + XQ + 'sumCsv' + XQ + ' style=' + XQ + s2 + XQ + '>Export CSV</button>';
@@ -1072,7 +1072,7 @@ h += '</tr></thead><tbody>';
 rows.forEach(function (r) {
 var lastKey = keys[keys.length - 1];
 var risk = Math.abs(r.t[lastKey] || 0) > 0.004 ? ' risk' : '';
-var activeStyle = (ACTIVE_ENT === r.human) ? ' style="background:#fdeaee;box-shadow:inset 3px 0 0 #f19ab1;"' : '';
+var activeStyle = (ACTIVE_ENT === r.human) ? ' style="background:#eef2fb;box-shadow:inset 3px 0 0 #1e40af;"' : '';
 h += '<tr class="row' + risk + '" data-ent="' + esc(r.human) + '"' + activeStyle + '>';
 h += '<td>' + esc(r.human) + ' - ' + esc(r.name) + '</td><td class="num"><span class="numaDrop" data-ent="' + esc(r.human) + '" style="cursor:pointer;text-decoration:underline;color:#1a1a18;font-weight:700;">' + r.count + ' ' + (ACTIVE_ENT === r.human ? '\u25b4' : '\u25be') + '</span></td>';
 keys.forEach(function (k, i) { h += money(r.t[k], cls(i)); });
@@ -1182,7 +1182,7 @@ function numaStyle() { if (document.getElementById('numaICStyle')) return; var s
   box.id = 'icWrap';
   box.style.cssText = 'display:none;padding:0 24px 24px;';
   box.innerHTML = '<div style="display:flex;align-items:center;gap:12px;margin:10px 0;">' +
-    '<button id="icRun" type="button" style="background:#fbcfd9;border:1px solid #f19ab1;color:#1a1a18;padding:10px 18px;border-radius:8px;font-weight:700;font-size:13px;cursor:pointer;">Run report</button>' +
+    '<button id="icRun" type="button" style="background:#1e3a8a;border:1px solid #1e40af;color:#ffffff;padding:10px 18px;border-radius:8px;font-weight:700;font-size:13px;cursor:pointer;">Run report</button>' +
     '<span id="icStatus" style="color:#6f6a6b;font-size:13px;"></span>' +
     '</div>' +
     '<div id="icResults"></div>';
