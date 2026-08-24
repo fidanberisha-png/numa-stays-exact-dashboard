@@ -266,7 +266,7 @@ var lastKey = keys[keys.length - 1];
 var risk = Math.abs(Number(r[lastKey] || 0)) > 0.004 ? ' risk' : '';
 h += '<tr class="row' + risk + '" data-code="' + esc(r.code) + '">';
 h += '<td class="mono">' + esc(r.code) + '</td>';
-h += '<td class="mono">' + esc(ent) + '</td>';
+h += '<td class="mono">' + esc((function(){ var __d = (document.getElementById('dashboard')||{}).value; if (__d !== 'ap') { return ent; } var __L = window.NUMA_ENTITIES || []; for (var __i=0; __i<__L.length; __i++){ if (String(__L[__i][1]) === String(ent)) { return String(ent) + ' - ' + __L[__i][3]; } } return ent; })()) + '</td>';
 h += '<td>' + esc(cleanName(r.name, ent)) + '</td>';
 keys.forEach(function (k, i) {
 var cls = '';
