@@ -39,7 +39,7 @@ function shell() {
     '<header>',
     '<div class="brand">Numa</div>',
     '<select class="company" id="company" title="Entity"><option value="consolidated">Consolidated (all entities)</option><option value="300">300 - Numa Norge AS</option></select>',
-    '<select class="company" id="dashboard" title="Dashboards"><option value="ap">Dashboards: AP Ageing</option><option value="ar">Dashboards: AR Ageing</option><option value="ic">Dashboards: InterCompany</option><option value=\"accrued\">Dashboards: Accrued</option><option value=\"prepaid\">Dashboards: PrePaid</option></select>',
+    '<select class="company" id="dashboard" title="Dashboards"><option value="ap">Dashboards: AP Ageing</option><option value="ar">Dashboards: AR Ageing</option><option value=\"accrued\">Dashboards: Accrued</option><option value=\"prepaid\">Dashboards: PrePaid</option></select>',
     '<span class="pill" id="conn">Checking connection</span>',
     '<div class="spacer"></div>',
     '<button class="btn sec" id="refresh">Refresh</button>',
