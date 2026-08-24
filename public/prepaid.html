@@ -12,19 +12,19 @@
   .state { padding:40px 24px; color:#6f6a6b; }
 
         /* Numa look: white page, the pink of the logo as the accent, the ink of the logo as the text. */
-        :root { --ink:#1a1a18; --pink:#fbcfd9; --pink-soft:#fdeaee; --pink-mid:#f19ab1; --pink-line:#f0d7de; }
+        :root { --ink:#1a1a18; --logo-pink:#fbcfd9; --pink:#1e3a8a; --pink-soft:#eef2fb; --pink-mid:#1e40af; --pink-line:#c7d5ef; --navy:#1e3a8a; --dark-blue:#0f2557; }
         body { background:#ffffff; color:var(--ink); }
         header { background:#ffffff; border-bottom:3px solid var(--pink); }
-        .brand { color:var(--ink); background:var(--pink); padding:6px 13px; border-radius:8px; font-weight:800; letter-spacing:-.01em; }
+        .brand { color:var(--ink); background:var(--logo-pink); padding:6px 13px; border-radius:8px; font-weight:800; letter-spacing:-.01em; }
         h1 { color:var(--ink); }
         .sub { color:#6f6a6b; }
         .company { background:var(--pink-soft); border-color:var(--pink-line); color:var(--ink); }
         .company:hover { border-color:var(--pink-mid); }
-        #dashboard { background-color:var(--pink); border-color:var(--pink-mid); color:var(--ink); }
+        #dashboard { background-color:var(--pink); border-color:var(--pink-mid); color:#ffffff; }
         .pill { background:#ffffff; border-color:var(--pink-line); color:#6f6a6b; }
         .pill.ok { background:var(--pink-soft); border-color:var(--pink-mid); color:var(--ink); }
-        .btn { background:var(--pink); border:1px solid var(--pink-mid); color:var(--ink); font-weight:700; box-shadow:none; }
-        .btn:hover { background:var(--pink-mid); filter:none; }
+        .btn { background:var(--pink); border:1px solid var(--pink-mid); color:#ffffff; font-weight:700; box-shadow:none; }
+        .btn:hover { background:var(--dark-blue); filter:none; }
         .btn.sec { background:#ffffff; border:1px solid var(--pink-line); color:var(--ink); }
         .btn.sec:hover { background:var(--pink-soft); border-color:var(--pink-mid); color:var(--ink); }
         .kpi { background:#ffffff; border-left:3px solid var(--pink); box-shadow:0 1px 3px rgba(26,26,24,.06); }
@@ -34,9 +34,9 @@
         thead th { background:var(--pink-soft); color:#6f6a6b; }
         tfoot td { background:var(--pink-soft); }
         .tab, .vtab { background:#ffffff; }
-        .tab.on, .vtab.on { background:var(--pink); border-color:var(--pink-mid); color:var(--ink); }
+        .tab.on, .vtab.on { background:var(--pink); border-color:var(--pink-mid); color:#ffffff; }
         .tab:hover, .vtab:hover { border-color:var(--pink-mid); color:var(--ink); }
-        input:focus, select:focus { outline:none; border-color:var(--pink-mid); box-shadow:0 0 0 3px rgba(241,154,177,.30); }
+        input:focus, select:focus { outline:none; border-color:var(--pink-mid); box-shadow:0 0 0 3px rgba(30,58,138,.30); }
         ::selection { background:var(--pink); }
         </style>
 </head>
