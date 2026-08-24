@@ -11,7 +11,9 @@ const AP_SOURCES = ['read/financial/PayablesList', 'read/financial/AgingPayables
 // keeps the four ranges it had. Only these two payable accounts are wanted.
 const AP_EDGES = [31, 61, 92, 180, 364, 730];
 const AR_EDGES = [30, 60, 90];
-const AP_GL = ['251100', '251150'];
+// AP accounts are matched by their DESCRIPTION, not by GL number, because
+  // different entities use different numbers for the same-named account.
+  const AP_DESCRIPTIONS = ['Trade accounts payable External', 'Accrued Expenses - AP'];
 const AR_SOURCES = ['read/financial/AgingReceivablesList', 'read/financial/ReceivablesList'];
 
 // ---- Live EUR currency conversion -------------------------------------------
@@ -199,21 +201,34 @@ module.exports = function (getToken) {
     for (let i = 0; i < edges.length; i++) { if (age <= edges[i]) return i; }
     return edges.length;
   }
-  function glOf(row) {
-    const fields = ['GLAccountCode', 'GLAccount', 'GLAccountCodeAP', 'AccountsPayableGLAccountCode', 'GLAccountCodeDescription'];
+  function glText(row) {
+    // Prefer the GL account DESCRIPTION so entities that use a different number
+    // for the same-named account are still matched correctly.
+    const descFields = ['GLAccountDescription', 'GLAccountCodeDescription', 'GLAccountName'];
+    for (let i = 0; i < descFields.length; i++) {
+      const v = row[descFields[i]];
+      if (v !== undefined && v !== null && String(v).trim() !== '') return String(v).trim();
+    }
+    return null;
+  }
+  function glCode(row) {
+    const fields = ['GLAccountCode', 'GLAccount', 'GLAccountCodeAP', 'AccountsPayableGLAccountCode'];
     for (let i = 0; i < fields.length; i++) {
       const v = row[fields[i]];
       if (v !== undefined && v !== null && String(v).trim() !== '') return String(v).trim();
     }
     return null;
   }
-  // Only the payable accounts that are really wanted are counted. When Exact
-  // does not put the account on the row nothing is thrown away.
+  function norm(s) { return String(s || '').trim().toLowerCase(); }
+  // Only the payable accounts that are really wanted are counted, matched by the
+  // account DESCRIPTION (not the number). When Exact does not put the account on
+  // the row nothing is thrown away.
   function glWanted(row, allow) {
     if (!allow || !allow.length) return true;
-    const gl = glOf(row);
-    if (!gl) return true;
-    for (let i = 0; i < allow.length; i++) { if (gl.indexOf(allow[i]) === 0) return true; }
+    const desc = glText(row);
+    if (!desc) return true;
+    const d = norm(desc);
+    for (let i = 0; i < allow.length; i++) { if (d === norm(allow[i])) return true; }
     return false;
   }
   function accumulate(map, rows, referTo, refDate, currency, rates, edges, allow, stats) {
@@ -389,7 +404,7 @@ module.exports = function (getToken) {
   }
   return res.status(502).json({ error: 'no source worked', errors: errors });
   });
-  router.get('/api/ageing-ap', function (req, res) { return handleAgeing(req, res, { sources: AP_SOURCES, edges: AP_EDGES, gl: AP_GL }); });
+  router.get('/api/ageing-ap', function (req, res) { return handleAgeing(req, res, { sources: AP_SOURCES, edges: AP_EDGES, gl: AP_DESCRIPTIONS }); });
   router.get('/api/ageing-ar', function (req, res) { return handleAgeing(req, res, { sources: AR_SOURCES, edges: AR_EDGES, gl: [] }); });
   return router;
 };
