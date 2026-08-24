@@ -982,7 +982,7 @@ bar.id = 'detTools';
 bar.style.cssText = 'display:flex;align-items:center;gap:10px;margin:0 24px 10px;';
 wrap.parentNode.insertBefore(bar, wrap);
 }
-bar.style.display = (VIEW === 'details') ? 'flex' : 'none';
+var __icOn = (document.getElementById('dashboard') || {}).value === 'ic'; bar.style.display = (VIEW === 'details' && !__icOn) ? 'flex' : 'none';
 var mode = xIsAP() ? 'ap' : 'ar';
 if (bar.getAttribute('data-mode') !== mode) {
 bar.setAttribute('data-mode', mode);
