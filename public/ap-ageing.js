@@ -142,7 +142,10 @@ return [{ key: 'b1', label: '0 - 30' }, { key: 'b2', label: '31 - 60' }, { key: 
 }
 function bkeys() { return BKS().map(function (b) { return b.key; }); }
 function cols() {
-var c = [['code', 'Code', 0], ['entity', 'Entity', 0], ['name', 'Name', 0]];
+var __apCols = (document.getElementById('dashboard') || {}).value !== 'ar';
+var c = __apCols
+  ? [['code', 'Code', 0], ['entityName', 'Entity Name', 0], ['entity', 'Entity Code', 0], ['name', 'Name', 0]]
+  : [['code', 'Code', 0], ['entity', 'Entity', 0], ['name', 'Name', 0]];
 BKS().forEach(function (b) { c.push([b.key, b.label, 1]); });
 c.push(['total', 'Outstanding', 1]);
 c.push(['average', 'Average', 1]);
@@ -266,7 +269,14 @@ var lastKey = keys[keys.length - 1];
 var risk = Math.abs(Number(r[lastKey] || 0)) > 0.004 ? ' risk' : '';
 h += '<tr class="row' + risk + '" data-code="' + esc(r.code) + '">';
 h += '<td class="mono">' + esc(r.code) + '</td>';
-h += '<td class="mono">' + esc((function(){ var __d = (document.getElementById('dashboard')||{}).value; if (__d !== 'ap') { return ent; } var __L = window.NUMA_ENTITIES || []; for (var __i=0; __i<__L.length; __i++){ if (String(__L[__i][1]) === String(ent)) { return String(ent) + ' - ' + __L[__i][3]; } } return ent; })()) + '</td>';
+var __dEnt = (document.getElementById('dashboard')||{}).value;
+var __entName = (function(){ var __L = window.NUMA_ENTITIES || []; for (var __i=0; __i<__L.length; __i++){ if (String(__L[__i][1]) === String(ent)) { return String(__L[__i][3]); } } return ''; })();
+if (__dEnt !== 'ar') {
+  h += '<td>' + esc(__entName) + '</td>';
+  h += '<td class="mono">' + esc(ent) + '</td>';
+} else {
+  h += '<td class="mono">' + esc(ent) + '</td>';
+}
 h += '<td>' + esc(cleanName(r.name, ent)) + '</td>';
 keys.forEach(function (k, i) {
 var cls = '';
@@ -278,7 +288,7 @@ h += money(r.total, 'strong');
 h += '<td class="num">' + (r.average === null || r.average === undefined ? '' : r.average) + '</td></tr>';
 if (S.open[r.code]) { h += detail(r); }
 });
-h += '</tbody><tfoot><tr><td>TOTAL</td><td></td><td>' + list.length + ' ' + who + '</td>';
+h += '</tbody><tfoot><tr><td>TOTAL</td>' + (((document.getElementById('dashboard')||{}).value !== 'ar') ? '<td></td>' : '') + '<td></td><td>' + list.length + ' ' + who + '</td>';
 keys.forEach(function (k) { h += money(t[k]); });
 h += money(t.total);
 h += '<td class="num">' + t.average + '</td></tr></tfoot></table>';
