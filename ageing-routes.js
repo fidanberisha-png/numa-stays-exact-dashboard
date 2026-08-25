@@ -231,14 +231,15 @@ module.exports = function (getToken) {
     for (let i = 0; i < allow.length; i++) { if (d === norm(allow[i])) return true; }
     return false;
   }
-  function accumulate(map, rows, referTo, refDate, currency, rates, edges, allow, stats) {
+  function accumulate(map, rows, referTo, refDate, currency, rates, edges, allow, stats, division) {
     const nb = edges.length + 1;
     rows.forEach(function (row) {
       if (!glWanted(row, allow)) { if (stats) stats.skipped = stats.skipped + 1; return; }
       const code = (row.AccountCode === undefined || row.AccountCode === null ? '' : String(row.AccountCode)).trim();
-      const key = code || String(row.AccountId || 'unknown');
+      const baseKey = code || String(row.AccountId || 'unknown');
+      const key = (division !== undefined && division !== null && String(division) !== '') ? (String(division) + '|' + baseKey) : baseKey;
       if (!map[key]) {
-        map[key] = { code: code, name: row.AccountName || '', total: 0, weighted: 0, absTotal: 0, count: 0, items: [] };
+        map[key] = { code: code, entity: (division !== undefined && division !== null) ? String(division) : '', name: row.AccountName || '', total: 0, weighted: 0, absTotal: 0, count: 0, items: [] };
         for (let b = 1; b <= nb; b++) { map[key]['b' + b] = 0; }
       }
       const acc = map[key];
@@ -370,7 +371,7 @@ module.exports = function (getToken) {
         if (!waiting) { waiting = { pages: 0, rows: 0, entities: 0 }; }
         waiting.pages += r.loading.pages; waiting.rows += r.loading.rows; waiting.entities += 1;
       }
-      if (r.rows) { gotAny = true; if (!out.source) out.source = r.source; totalRows += r.rows.length; accumulate(map, r.rows, referTo, refDate, cur, rates, edges, allow, stats); }
+      if (r.rows) { gotAny = true; if (!out.source) out.source = r.source; totalRows += r.rows.length; accumulate(map, r.rows, referTo, refDate, cur, rates, edges, allow, stats, targets[i]); }
     }
     if (waiting) { out.loading = waiting; }
     if (!gotAny) {
