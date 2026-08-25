@@ -141,6 +141,14 @@ if (d && d.buckets && d.buckets.length) { return d.buckets; }
 return [{ key: 'b1', label: '0 - 30' }, { key: 'b2', label: '31 - 60' }, { key: 'b3', label: '61 - 90' }, { key: 'b4', label: '> 90' }];
 }
 function bkeys() { return BKS().map(function (b) { return b.key; }); }
+function entResolve(ev) {
+  var s = String(ev === null || ev === undefined ? '' : ev);
+  var L = window.NUMA_ENTITIES || [];
+  for (var i = 0; i < L.length; i++) {
+    if (String(L[i][1]) === s || String(L[i][2]) === s) { return { code: String(L[i][1]), name: String(L[i][3]) }; }
+  }
+  return { code: s, name: '' };
+}
 function cols() {
 var __apCols = (document.getElementById('dashboard') || {}).value !== 'ar';
 var c = __apCols
@@ -267,15 +275,15 @@ list.forEach(function (r) {
 var ent = entOf(r);
 var lastKey = keys[keys.length - 1];
 var risk = Math.abs(Number(r[lastKey] || 0)) > 0.004 ? ' risk' : '';
-h += '<tr class="row' + risk + '" data-code="' + esc(r.code) + '">';
+h += '<tr class="row' + risk + '" data-code="' + esc(r.code) + '@@' + esc(ent) + '">';
 h += '<td class="mono">' + esc(r.code) + '</td>';
 var __dEnt = (document.getElementById('dashboard')||{}).value;
-var __entName = (function(){ var __L = window.NUMA_ENTITIES || []; for (var __i=0; __i<__L.length; __i++){ if (String(__L[__i][1]) === String(ent)) { return String(__L[__i][3]); } } return ''; })();
+var __er = entResolve(ent);
 if (__dEnt !== 'ar') {
-  h += '<td>' + esc(__entName) + '</td>';
-  h += '<td class="mono">' + esc(ent) + '</td>';
+  h += '<td>' + esc(__er.name) + '</td>';
+  h += '<td class="mono">' + esc(__er.code) + '</td>';
 } else {
-  h += '<td class="mono">' + esc(ent) + '</td>';
+  h += '<td class="mono">' + esc(__er.code) + '</td>';
 }
 h += '<td>' + esc(cleanName(r.name, ent)) + '</td>';
 keys.forEach(function (k, i) {
@@ -286,7 +294,7 @@ h += money(r[k], cls);
 });
 h += money(r.total, 'strong');
 h += '<td class="num">' + (r.average === null || r.average === undefined ? '' : r.average) + '</td></tr>';
-if (S.open[r.code]) { h += detail(r); }
+if (S.open[r.code + '@@' + ent]) { h += detail(r); }
 });
 h += '</tbody><tfoot><tr><td>TOTAL</td>' + (((document.getElementById('dashboard')||{}).value !== 'ar') ? '<td></td>' : '') + '<td></td><td>' + list.length + ' ' + who + '</td>';
 keys.forEach(function (k) { h += money(t[k]); });
@@ -942,7 +950,7 @@ var by = (el('referto') && el('referto').value === 'duedate') ? 'due date' : 'in
 var selEl = document.getElementById('company');
 var scope = (selEl && selEl.value === 'selected') ? ('all ' + ENT.length + ' entities') : ((selEl && selEl.selectedOptions[0]) ? selEl.selectedOptions[0].text : 'one entity');
 var title = 'Ageing analysis: ' + (isAP ? 'A/P' : 'A/R') + ' - details of ' + scope;
-var head = ['Code', 'Entity', one, ];
+var head = isAP ? ['Code', 'Entity Name', 'Entity Code', one, ] : ['Code', 'Entity', one, ];
 BK.forEach(function (b) { head.push(b.label); });
 head.push('Outstanding');
 head.push('Average days');
@@ -954,20 +962,20 @@ rows.push([]);
 rows.push(head.map(function (t) { return { v: t, s: 1 }; }));
 list.forEach(function (a) {
 var ent = entOf(a);
-var r = [{ v: String(a.code || '') }, { v: ent }, { v: cleanName(a.name, ent) }];
+var __er = entResolve(ent); var r = isAP ? [{ v: String(a.code || '') }, { v: __er.name }, { v: __er.code }, { v: cleanName(a.name, ent) }] : [{ v: String(a.code || '') }, { v: ent }, { v: cleanName(a.name, ent) }];
 keys.forEach(function (k) { r.push({ n: Number(a[k]) || 0, s: 2 }); });
 r.push({ n: Number(a.total) || 0, s: 2 });
 r.push({ n: Number(a.average) || 0 });
 rows.push(r);
 });
 var t = totalsOf(list);
-var tot = [{ v: 'TOTAL', s: 4 }, { v: '', s: 4 }, { v: list.length + ' ' + one.toLowerCase() + 's', s: 4 }];
+var tot = isAP ? [{ v: 'TOTAL', s: 4 }, { v: '', s: 4 }, { v: '', s: 4 }, { v: list.length + ' ' + one.toLowerCase() + 's', s: 4 }] : [{ v: 'TOTAL', s: 4 }, { v: '', s: 4 }, { v: list.length + ' ' + one.toLowerCase() + 's', s: 4 }];
 keys.forEach(function (k) { tot.push({ n: t[k], s: 3 }); });
 tot.push({ n: t.total, s: 3 });
 tot.push({ n: t.average || 0, s: 4 });
 rows.push([]);
 rows.push(tot);
-var widths = [14, 10, 44];
+var widths = isAP ? [14, 30, 12, 44] : [14, 10, 44];
 BK.forEach(function () { widths.push(15); });
 widths.push(17);
 widths.push(14);
