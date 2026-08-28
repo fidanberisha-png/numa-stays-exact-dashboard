@@ -46,6 +46,10 @@ app.get('/prepaid', (req, res) => {
     res.sendFile(__dirname + '/public/prepaid.html');
 });
 
+app.get('/summary', (req, res) => {
+    res.sendFile(__dirname + '/public/summary.html');
+});
+
 app.get('/', (req, res) => {
     res.sendFile(__dirname + '/public/dashboard.html');
 });
