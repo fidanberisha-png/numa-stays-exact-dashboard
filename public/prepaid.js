@@ -131,6 +131,7 @@
       '<select class="company" id="company" title="Entity">' + opts + '</select>',
       '<select class="company" id="dashboard" title="Dashboards">',
       '<option value="prepaid">Dashboards: PrePaid</option>',
+        '<option value="summary">Dashboards: Summary</option>',
       '<option value="accrued">Dashboards: Accrued</option>',
       '<option value="ap">Dashboards: AP Ageing</option>',
       '<option value="ar">Dashboards: AR Ageing</option>',
@@ -198,7 +199,8 @@
     el('dashboard').value = 'prepaid';
     el('dashboard').onchange = function () {
       var v = this.value;
-      if (v === 'prepaid') return;
+      if (v === 'summary') { enterSummary(); return; }
+      if (v === 'prepaid') { exitSummary(); return; }
       if (v === 'accrued') { window.location.href = '/accrued'; return; }
       window.location.href = '/?dashboard=' + v;
     };
@@ -557,6 +559,152 @@
         '(8) the card above the list follows the journal report of Exact: the opening balance of ' + CODE + ', then every journal with its debit and its credit, then the total and the closing balance, and the financial year can be left blank to read every year at once.';
     n.textContent = txt;
   }
+
+
+  /* ================= SUMMARY TAB (Prepaid only) ================= */
+
+  /* ===== Summary tab (Prepaid only) ===== */
+  var SUM = { on:false, busy:false, rows:null, err:'' };
+  var SUM_YEARS = [2024,2025,2026,2027];
+  var MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+
+  function sumMonthIndex(y,m){ return y*12+(m-1); }
+
+  function parseDMY(s){
+    if(!s) return null;
+    var p = String(s).split('-');
+    if(p.length<3) return null;
+    var d=parseInt(p[0],10), mo=parseInt(p[1],10), y=parseInt(p[2],10);
+    if(!y||!mo) return null;
+    return { y:y, m:mo, d:d||1 };
+  }
+
+  async function loadSummary(){
+    if(SUM.busy) return;
+    SUM.busy=true; SUM.err=''; SUM.rows=null;
+    drawSummary();
+    var perEntity = [];
+    for (var i=0;i<ENT.length;i++){
+      var e = ENT[i];
+      var dv = e[2];
+      var entRow = { code:e[1], name:e[3], months:{}, total:0 };
+      try{
+        var url = '/api/prepaid/schedule?division='+encodeURIComponent(dv)+
+          '&code='+encodeURIComponent(CODE)+'&journal=all&mode=period&until=year';
+        var r = await fetch(url,{credentials:'same-origin'});
+        var j = {};
+        try{ j = await r.json(); }catch(_){}
+        if(r.ok && j && j.rows){
+          j.rows.forEach(function(row){
+            var st = parseDMY(row.start), en = parseDMY(row.end);
+            var monthly = Number(row.monthly)||0;
+            if(!st||!en||!monthly) return;
+            var a = sumMonthIndex(st.y,st.m), b = sumMonthIndex(en.y,en.m);
+            for(var mi=a; mi<=b; mi++){
+              var yy = Math.floor(mi/12), mm = (mi%12)+1;
+              if(yy<2024||yy>2027) continue;
+              var key = yy+'-'+mm;
+              if(!entRow.months[key]) entRow.months[key] = { debit:0, credit:0 };
+              entRow.months[key].debit += monthly;
+              entRow.months[key].credit += monthly;
+            }
+            entRow.total += Number(row.total)||0;
+          });
+        }
+      }catch(err){ }
+      perEntity.push(entRow);
+    }
+    SUM.rows = perEntity;
+    SUM.busy=false;
+    drawSummary();
+  }
+
+
+  function drawSummary(){
+    var w = el('wrap');
+    if(!w) return;
+    var hideIds = ['kpis','jbox','left','note'];
+    hideIds.forEach(function(id){ var n=el(id); if(n) n.style.display='none'; });
+    var ctr = document.querySelector('.controls'); if(ctr) ctr.style.display='none';
+    var asof = el('asof'); if(asof) asof.style.display='none';
+    var h1 = document.querySelector('h1'); if(h1) h1.textContent='PrePaid - Summary';
+
+    if(SUM.busy){
+      w.innerHTML='<div class="state">Reading the prepaid amortisation of all 21 entities out of Exact Online, this can take a moment...</div>';
+      return;
+    }
+    if(!SUM.rows){
+      w.innerHTML='<div class="state">Loading summary...</div>';
+      return;
+    }
+    var colHead1='<th class="sh" rowspan="2">Entity</th>';
+    SUM_YEARS.forEach(function(y){
+      colHead1+='<th class="sh yr" colspan="12">'+y+'</th>';
+    });
+    colHead1+='<th class="sh" rowspan="2">Total</th>';
+    var colHead2='';
+    SUM_YEARS.forEach(function(){
+      MONTHS.forEach(function(mn){ colHead2+='<th class="sh mo">'+mn+'</th>'; });
+    });
+    var head='<thead><tr>'+colHead1+'</tr><tr>'+colHead2+'</tr></thead>';
+
+    function fmt(n){ n=Number(n)||0; if(Math.round(n*100)===0) return ''; return eur(n); }
+
+    var body='';
+    SUM.rows.forEach(function(er){
+      var totalAll=er.total;
+      var cumCredit=0;
+      var debCells='', creCells='', netCells='';
+      SUM_YEARS.forEach(function(y){
+        for(var m=1;m<=12;m++){
+          var key=y+'-'+m;
+          var cell=er.months[key]||{debit:0,credit:0};
+          cumCredit+=cell.credit;
+          var net=totalAll-cumCredit;
+          debCells+='<td class="r">'+fmt(cell.debit)+'</td>';
+          creCells+='<td class="r">'+fmt(cell.credit)+'</td>';
+          netCells+='<td class="r">'+fmt(net)+'</td>';
+        }
+      });
+      var remaining=totalAll-cumCredit;
+      body+='<tr class="ename"><td>'+esc(er.code+' - '+er.name)+'</td>'+
+        (function(){var c='';for(var i=0;i<48;i++)c+='<td></td>';return c;})()+
+        '<td></td></tr>';
+      body+='<tr class="drow"><td class="lbl">Debit</td>'+debCells+'<td class="r"></td></tr>';
+      body+='<tr class="crow"><td class="lbl">Credit</td>'+creCells+'<td class="r"></td></tr>';
+      body+='<tr class="nrow"><td class="lbl">Net</td>'+netCells+'<td class="r"><b>'+eur(remaining)+'</b></td></tr>';
+    });
+
+    var css='<style>'+
+      '.sumwrap{overflow:auto;border:1px solid #c7d5ef;border-radius:10px}'+
+      '.stab{border-collapse:collapse;font-size:12px;white-space:nowrap}'+
+      '.stab th,.stab td{border:1px solid #e3e8f2;padding:4px 8px;text-align:left}'+
+      '.stab th.sh{background:#eef2fb;color:#1a1a18;font-weight:700;text-align:center;position:sticky;top:0}'+
+      '.stab th.yr{border-bottom:2px solid #1e3a8a}'+
+      '.stab th.mo{font-weight:600;color:#6f6a6b}'+
+      '.stab td.r{text-align:right}'+
+      '.stab tr.ename td{background:#1e3a8a;color:#fff;font-weight:700}'+
+      '.stab td.lbl{font-weight:600;color:#1a1a18;background:#f7f9fd;position:sticky;left:0}'+
+      '.stab tr.nrow td{border-bottom:2px solid #c7d5ef;font-weight:600}'+
+      '</style>';
+    w.innerHTML=css+'<div class="sumwrap"><table class="stab">'+head+'<tbody>'+body+'</tbody></table></div>';
+  }
+
+
+  function enterSummary(){
+    SUM.on = true;
+    if(!SUM.rows){ loadSummary(); }
+    else { drawSummary(); }
+  }
+  function exitSummary(){
+    SUM.on = false;
+    ['kpis','jbox','left','note'].forEach(function(id){ var n=el(id); if(n) n.style.display=''; });
+    var ctr=document.querySelector('.controls'); if(ctr) ctr.style.display='';
+    var asof=el('asof'); if(asof) asof.style.display='';
+    var h1=document.querySelector('h1'); if(h1) h1.textContent='PrePaid';
+    draw();
+  }
+
 
   async function boot() {
     await skin();
