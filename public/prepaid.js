@@ -564,7 +564,7 @@
   /* ================= SUMMARY TAB (Prepaid only) ================= */
 
   /* ===== Summary tab (Prepaid only) ===== */
-  var SUM = { on:false, busy:false, rows:null, err:'' };
+  var SUM = { on:false, busy:false, rows:null, err:'', progress:0 };
   var SUM_YEARS = [2024,2025,2026,2027];
   var MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
 
@@ -581,21 +581,25 @@
 
   async function loadSummary(){
     if(SUM.busy) return;
-    SUM.busy=true; SUM.err=''; SUM.rows=null;
+    SUM.busy=true; SUM.err=''; SUM.rows=[]; SUM.progress=0;
     drawSummary();
-    var perEntity = [];
+    async function fetchOne(dv){
+      var url = '/api/prepaid/schedule?division='+encodeURIComponent(dv)+
+        '&code='+encodeURIComponent(CODE)+'&journal=all&mode=period&until=year';
+      var r = await fetch(url,{credentials:'same-origin'});
+      var j = {};
+      try{ j = await r.json(); }catch(_){}
+      return { ok:r.ok, j:j };
+    }
     for (var i=0;i<ENT.length;i++){
       var e = ENT[i];
       var dv = e[2];
       var entRow = { code:e[1], name:e[3], months:{}, total:0 };
       try{
-        var url = '/api/prepaid/schedule?division='+encodeURIComponent(dv)+
-          '&code='+encodeURIComponent(CODE)+'&journal=all&mode=period&until=year';
-        var r = await fetch(url,{credentials:'same-origin'});
-        var j = {};
-        try{ j = await r.json(); }catch(_){}
-        if(r.ok && j && j.rows){
-          j.rows.forEach(function(row){
+        var res = await fetchOne(dv);
+        if(!res.ok || !res.j || !res.j.rows){ res = await fetchOne(dv); }
+        if(res.ok && res.j && res.j.rows){
+          res.j.rows.forEach(function(row){
             var st = parseDMY(row.start), en = parseDMY(row.end);
             var monthly = Number(row.monthly)||0;
             if(!st||!en||!monthly) return;
@@ -612,9 +616,10 @@
           });
         }
       }catch(err){ }
-      perEntity.push(entRow);
+      SUM.rows.push(entRow);
+      SUM.progress = i+1;
+      drawSummary();
     }
-    SUM.rows = perEntity;
     SUM.busy=false;
     drawSummary();
   }
@@ -629,12 +634,16 @@
     var asof = el('asof'); if(asof) asof.style.display='none';
     var h1 = document.querySelector('h1'); if(h1) h1.textContent='PrePaid - Summary';
 
-    if(SUM.busy){
-      w.innerHTML='<div class="state">Reading the prepaid amortisation of all 21 entities out of Exact Online, this can take a moment...</div>';
-      return;
-    }
     if(!SUM.rows){
       w.innerHTML='<div class="state">Loading summary...</div>';
+      return;
+    }
+    var banner='';
+    if(SUM.busy){
+      banner='<div class="state" style="padding:12px 16px">Reading the prepaid amortisation out of Exact Online... '+(SUM.progress||0)+' of '+ENT.length+' entities loaded.</div>';
+    }
+    if(SUM.busy && (!SUM.rows || !SUM.rows.length)){
+      w.innerHTML=banner;
       return;
     }
     var colHead1='<th class="sh" rowspan="2">Entity</th>';
@@ -687,7 +696,7 @@
       '.stab td.lbl{font-weight:600;color:#1a1a18;background:#f7f9fd;position:sticky;left:0}'+
       '.stab tr.nrow td{border-bottom:2px solid #c7d5ef;font-weight:600}'+
       '</style>';
-    w.innerHTML=css+'<div class="sumwrap"><table class="stab">'+head+'<tbody>'+body+'</tbody></table></div>';
+    w.innerHTML=(banner||'')+css+'<div class="sumwrap"><table class="stab">'+head+'<tbody>'+body+'</tbody></table></div>';
   }
 
 
