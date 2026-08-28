@@ -43,7 +43,7 @@
       .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
   }
   function eur(n) {
-    return (Number(n) || 0).toLocaleString('de-DE', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' €';
+    return (Number(n) || 0).toLocaleString('de-DE', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' â¬';
   }
   function n0(n) { return (Number(n) || 0).toLocaleString('de-DE'); }
     // The year the schedule is counted against. With a blank financial year the
@@ -110,8 +110,140 @@
         '.btab tr.btot td{background:#eef2fb;font-weight:700;border-top:2px solid #1e40af}' +
         '.btab tr.bcl td{background:#eef2fb;font-weight:700;color:#1a1a18}' +
         '.ctl input[type=date],.ctl input[type=text],.ctl select{min-width:150px}' +
+      '.ptabs{display:flex;gap:8px;margin:14px 0 2px 0}' +
+      '.ptab{border:1px solid #c7d5ef;background:#fff;color:#1e3a8a;font-weight:700;font-size:13px;padding:7px 20px;border-radius:8px;cursor:pointer}' +
+      '.ptab.on{background:#1e3a8a;color:#fff;border-color:#1e3a8a}' +
+      '.sumwrap{overflow:auto;border:1px solid #c7d5ef;border-radius:10px;margin-top:12px}' +
+      '.stab{border-collapse:collapse;font-size:12px;white-space:nowrap}' +
+      '.stab th,.stab td{border:1px solid #e3e8f2;padding:4px 8px;text-align:left}' +
+      '.stab th.sh{background:#eef2fb;color:#1a1a18;font-weight:700;text-align:center;position:sticky;top:0}' +
+      '.stab th.yr{border-bottom:2px solid #1e3a8a}' +
+      '.stab th.mo{font-weight:600;color:#6f6a6b}' +
+      '.stab td.r{text-align:right}' +
+      '.stab tr.ename td{background:#1e3a8a;color:#fff;font-weight:700}' +
+      '.stab td.lbl{font-weight:600;color:#1a1a18;background:#f7f9fd;position:sticky;left:0}' +
+      '.stab tr.nrow td{border-bottom:2px solid #c7d5ef;font-weight:600}' +
       '</style>';
     document.head.insertAdjacentHTML('beforeend', extra);
+  }
+
+  var SUM = { busy:false, rows:null, progress:0, loaded:false };
+  var SUM_YEARS = [2024, 2025, 2026, 2027];
+  var SMONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  function sumMonthIndex(y, m) { return y * 12 + (m - 1); }
+  function sumWait(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
+  function sumParseDMY(v) {
+    if (!v) return null;
+    var p = String(v).split('-');
+    if (p.length < 3) return null;
+    var d = parseInt(p[0], 10), mo = parseInt(p[1], 10), y = parseInt(p[2], 10);
+    if (!y || !mo) return null;
+    return { y: y, m: mo, d: d || 1 };
+  }
+
+  async function loadSummary() {
+    if (SUM.busy) return;
+    SUM.busy = true; SUM.rows = []; SUM.progress = 0;
+    drawSummary();
+    async function fetchOne(dv) {
+      var url = '/api/prepaid/schedule' + String.fromCharCode(63) + 'division=' + encodeURIComponent(dv) +
+        String.fromCharCode(38) + 'code=' + encodeURIComponent(CODE) +
+        String.fromCharCode(38) + 'journal=all' + String.fromCharCode(38) + 'mode=period' +
+        String.fromCharCode(38) + 'until=year';
+      var r = await fetch(url, { credentials: 'same-origin' });
+      var j = {}; try { j = await r.json(); } catch (_) {}
+      return { ok: r.ok, j: j };
+    }
+    for (var i = 0; i < ENT.length; i++) {
+      var e = ENT[i]; var dv = e[2];
+      var entRow = { code: e[1], name: e[3], months: {}, total: 0 };
+      try {
+        var res = await fetchOne(dv);
+        if (!res.ok || !res.j || !res.j.rows) { await sumWait(1500); res = await fetchOne(dv); }
+        if (!res.ok || !res.j || !res.j.rows) { await sumWait(3000); res = await fetchOne(dv); }
+        if (res.ok && res.j && res.j.rows) {
+          res.j.rows.forEach(function (row) {
+            var st = sumParseDMY(row.start), en = sumParseDMY(row.end);
+            var monthly = Number(row.monthly) || 0;
+            if (!st || !en || !monthly) return;
+            var a = sumMonthIndex(st.y, st.m), b = sumMonthIndex(en.y, en.m);
+            for (var mi = a; mi <= b; mi++) {
+              var yy = Math.floor(mi / 12), mm = (mi % 12) + 1;
+              if (yy < 2024 || yy > 2027) continue;
+              var key = yy + '-' + mm;
+              if (!entRow.months[key]) entRow.months[key] = { debit: 0, credit: 0 };
+              entRow.months[key].debit += monthly;
+              entRow.months[key].credit += monthly;
+            }
+            entRow.total += Number(row.total) || 0;
+          });
+        }
+      } catch (err) {}
+      SUM.rows.push(entRow);
+      SUM.progress = i + 1;
+      drawSummary();
+      await sumWait(500);
+    }
+    SUM.busy = false; SUM.loaded = true;
+    drawSummary();
+  }
+
+  function drawSummary() {
+    var w = el('summaryPane');
+    if (!w) return;
+    if (!SUM.rows) { w.innerHTML = '<div class="state">Loading summary...</div>'; return; }
+    var banner = '';
+    if (SUM.busy) { banner = '<div class="state" style="padding:12px 16px">Reading the prepaid amortisation out of Exact Online... ' + (SUM.progress || 0) + ' of ' + ENT.length + ' entities loaded.</div>'; }
+    if (SUM.busy && (!SUM.rows || !SUM.rows.length)) { w.innerHTML = banner; return; }
+    var colHead1 = '<th class="sh" rowspan="2">Entity</th>';
+    SUM_YEARS.forEach(function (y) { colHead1 += '<th class="sh yr" colspan="12">' + y + '</th>'; });
+    colHead1 += '<th class="sh" rowspan="2">Total</th>';
+    var colHead2 = '';
+    SUM_YEARS.forEach(function () { SMONTHS.forEach(function (mn) { colHead2 += '<th class="sh mo">' + mn + '</th>'; }); });
+    var head = '<thead><tr>' + colHead1 + '</tr><tr>' + colHead2 + '</tr></thead>';
+    function fmt(n) { n = Number(n) || 0; if (Math.round(n * 100) === 0) return ''; return eur(n); }
+    var body = '';
+    SUM.rows.forEach(function (er) {
+      var totalAll = er.total, cumCredit = 0;
+      var debCells = '', creCells = '', netCells = '';
+      SUM_YEARS.forEach(function (y) {
+        for (var m = 1; m <= 12; m++) {
+          var key = y + '-' + m;
+          var cell = er.months[key] || { debit: 0, credit: 0 };
+          cumCredit += cell.credit;
+          var net = totalAll - cumCredit;
+          debCells += '<td class="r">' + fmt(cell.debit) + '</td>';
+          creCells += '<td class="r">' + fmt(cell.credit) + '</td>';
+          netCells += '<td class="r">' + fmt(net) + '</td>';
+        }
+      });
+      var remaining = totalAll - cumCredit;
+      body += '<tr class="ename"><td>' + esc(er.code + ' - ' + er.name) + '</td>' +
+        (function () { var c = ''; for (var i = 0; i < 48; i++) c += '<td></td>'; return c; })() + '<td></td></tr>';
+      body += '<tr class="drow"><td class="lbl">Debit</td>' + debCells + '<td class="r"></td></tr>';
+      body += '<tr class="crow"><td class="lbl">Credit</td>' + creCells + '<td class="r"></td></tr>';
+      body += '<tr class="nrow"><td class="lbl">Net</td>' + netCells + '<td class="r"><b>' + eur(remaining) + '</b></td></tr>';
+    });
+    w.innerHTML = (banner || '') + '<div class="sumwrap"><table class="stab">' + head + '<tbody>' + body + '</tbody></table></div>';
+  }
+
+  function setTab(which) {
+    var isSum = (which === 'summary');
+    var dp = el('detailsPane'), sp = el('summaryPane');
+    if (dp) dp.style.display = isSum ? 'none' : '';
+    if (sp) sp.style.display = isSum ? '' : 'none';
+    var ts = el('tabSummary'), td = el('tabDetails');
+    if (ts) ts.className = 'ptab' + (isSum ? ' on' : '');
+    if (td) td.className = 'ptab' + (isSum ? '' : ' on');
+    var co = el('company');
+    if (co) { co.disabled = isSum; co.style.opacity = isSum ? '0.5' : ''; co.style.pointerEvents = isSum ? 'none' : ''; }
+    var h = document.querySelector('h1');
+    if (h) h.textContent = isSum ? 'Summary' : 'PrePaid';
+    var sub = el('asof');
+    if (sub) sub.textContent = isSum
+      ? 'Prepaid amortisation of account ' + CODE + ' for every entity - live data from Exact Online'
+      : 'Prepaid expenses on G/L account ' + CODE + ' - live data from Exact Online';
+    if (isSum && !SUM.loaded && !SUM.busy) loadSummary();
   }
 
   function shell() {
@@ -131,8 +263,7 @@
       '<select class="company" id="company" title="Entity">' + opts + '</select>',
       '<select class="company" id="dashboard" title="Dashboards">',
       '<option value="prepaid">Dashboards: PrePaid</option>',
-        '<option value="summary">Dashboards: Summary</option>',
-      '<option value="accrued">Dashboards: Accrued</option>',
+              '<option value="accrued">Dashboards: Accrued</option>',
       '<option value="ap">Dashboards: AP Ageing</option>',
       '<option value="ar">Dashboards: AR Ageing</option>',
       '<option value="ic">Dashboards: InterCompany</option>',
@@ -143,8 +274,10 @@
       '<a class="btn" href="/auth/login">Connect Exact Online</a>',
       '</header>',
       '',
+      '<div class="ptabs"><button class="ptab" id="tabSummary">Summary</button><button class="ptab on" id="tabDetails">Details</button></div>',
       '<h1>PrePaid</h1>',
       '<div class="sub" id="asof">Prepaid expenses on G/L account ' + CODE + ' - live data from Exact Online</div>',
+      '<div id="detailsPane">',
       '<div class="controls">',
       '<div class="ctl"><label for="year">FINANCIAL YEAR</label><select id="year">' + yopts + '</select></div>',
       '<div class="ctl"><label for="gl">G/L ACCOUNT</label><select id="gl"><option value="' + CODE + '">Prepaid Expenses (' + CODE + ')</option></select></div>',
@@ -163,7 +296,9 @@
       '<div id="jbox"></div>',
       '<div class="wrap" id="wrap"><div class="state">Choose an entity and a financial year, then press Apply</div></div>',
       '<div id="left"></div>',
-      '<div class="note" id="note"></div>'
+      '<div class="note" id="note"></div>',
+      '</div>',
+      '<div id="summaryPane" style="display:none"></div>'
     ].join('');
 
     el('company').value = S.entity;
@@ -196,12 +331,14 @@
       if (S.entity) run(); else draw();
     };
     el('csv').onclick = function () { csv(); };
+    el('tabSummary').onclick = function () { setTab('summary'); };
+    el('tabDetails').onclick = function () { setTab('details'); };
+    setTab('details');
     el('dashboard').value = 'prepaid';
     el('dashboard').onchange = function () {
       var v = this.value;
       if (v === 'prepaid') return;
-      if (v === 'summary') { window.location.href = '/summary'; return; }
-      if (v === 'accrued') { window.location.href = '/accrued'; return; }
+            if (v === 'accrued') { window.location.href = '/accrued'; return; }
       window.location.href = '/?dashboard=' + v;
     };
     kpis();
@@ -420,7 +557,7 @@
       var open = !!S.open[k];
       html += '<div class="grp">' +
         '<div class="ghead" data-k="' + esc(k) + '">' +
-        '<span class="arw">' + (open ? '▾' : '▸') + '</span>' +
+        '<span class="arw">' + (open ? 'â¾' : 'â¸') + '</span>' +
         '<span class="gcode">' + esc(g.code) + '</span>' +
         '<span class="gname">' + esc(g.name || '') + '</span>' +
         '<span class="gnum">' + n0(g.rows.length) + ' invoices</span>' +
@@ -459,9 +596,9 @@
   function tableFor(rows, y) {
     var head = '<thead><tr>' +
       '<th>No.</th><th>Date</th><th>Cost</th><th>Accc</th><th>Description</th><th>Invoice</th>' +
-      '<th class="r">Total (€)</th><th>Start Date</th><th>End Date</th>' +
+      '<th class="r">Total (â¬)</th><th>Start Date</th><th>End Date</th>' +
       '<th class="r">Total Months</th><th class="r">Months Used (' + y + ')</th><th class="r">Months Left (' + (y + 1) + ')</th>' +
-      '<th class="r">Monthly Amort (€)</th><th class="r">Expensed ' + y + ' (€)</th><th class="r">Prepaid ' + (y + 1) + ' (€)</th>' +
+      '<th class="r">Monthly Amort (â¬)</th><th class="r">Expensed ' + y + ' (â¬)</th><th class="r">Prepaid ' + (y + 1) + ' (â¬)</th>' +
       '<th>Journal</th></tr></thead>';
     var body = '';
     rows.forEach(function (r, i) {
