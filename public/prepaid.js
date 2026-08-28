@@ -43,7 +43,7 @@
       .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
   }
   function eur(n) {
-    return (Number(n) || 0).toLocaleString('de-DE', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' â¬';
+    return (Number(n) || 0).toLocaleString('de-DE', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' \u20ac';
   }
   function n0(n) { return (Number(n) || 0).toLocaleString('de-DE'); }
     // The year the schedule is counted against. With a blank financial year the
@@ -557,7 +557,7 @@
       var open = !!S.open[k];
       html += '<div class="grp">' +
         '<div class="ghead" data-k="' + esc(k) + '">' +
-        '<span class="arw">' + (open ? 'â¾' : 'â¸') + '</span>' +
+        '<span class="arw">' + (open ? '\u25be' : '\u25b8') + '</span>' +
         '<span class="gcode">' + esc(g.code) + '</span>' +
         '<span class="gname">' + esc(g.name || '') + '</span>' +
         '<span class="gnum">' + n0(g.rows.length) + ' invoices</span>' +
@@ -596,9 +596,9 @@
   function tableFor(rows, y) {
     var head = '<thead><tr>' +
       '<th>No.</th><th>Date</th><th>Cost</th><th>Accc</th><th>Description</th><th>Invoice</th>' +
-      '<th class="r">Total (â¬)</th><th>Start Date</th><th>End Date</th>' +
+      '<th class="r">Total (\u20ac)</th><th>Start Date</th><th>End Date</th>' +
       '<th class="r">Total Months</th><th class="r">Months Used (' + y + ')</th><th class="r">Months Left (' + (y + 1) + ')</th>' +
-      '<th class="r">Monthly Amort (â¬)</th><th class="r">Expensed ' + y + ' (â¬)</th><th class="r">Prepaid ' + (y + 1) + ' (â¬)</th>' +
+      '<th class="r">Monthly Amort (\u20ac)</th><th class="r">Expensed ' + y + ' (\u20ac)</th><th class="r">Prepaid ' + (y + 1) + ' (\u20ac)</th>' +
       '<th>Journal</th></tr></thead>';
     var body = '';
     rows.forEach(function (r, i) {
