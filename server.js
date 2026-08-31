@@ -97,6 +97,7 @@ function loadToken() {
 
 let tokenData = loadToken();
 let lastRefresh = Date.now();
+let refuseCount = 0;
 const REFRESH_INTERVAL = 60 * 1000;
 
 // ====================================
@@ -144,6 +145,7 @@ app.get('/auth/callback', async (req, res) => {
                 }));
 
       tokenData = response.data;
+          refuseCount = 0;
                 tokenData.created_at = Date.now();
                       saveToken();
                 req.session.authenticated = true;
@@ -200,6 +202,7 @@ async function refreshToken() {
           }));
 
       tokenData = response.data;
+          refuseCount = 0;
           tokenData.created_at = Date.now();
           lastRefresh = Date.now();
           console.log('Token refreshed successfully');
@@ -207,9 +210,18 @@ async function refreshToken() {
     } catch (error) {
           console.error('Token refresh failed:', error.message);
                 if (error.response && error.response.status === 400) {
-                                tokenData = null;
-                                saveToken();
-                                console.error('Exact refused the refresh token, press Connect Exact Online again');
+                                // Exact sometimes refuses one single refresh (a second call that
+                                // used the same one-time token, or a hiccup on their side). Giving
+                                // the connection up after the first refusal is what emptied the
+                                // dashboards, so it is only dropped after three refusals in a row.
+                                refuseCount = refuseCount + 1;
+                                if (refuseCount >= 3) {
+                                                tokenData = null;
+                                                saveToken();
+                                                console.error('Exact refused the refresh token three times, press Connect Exact Online again');
+                                } else {
+                                                console.error('Exact refused this refresh, trying again in a minute (' + refuseCount + '/3)');
+                                }
                 }
     }
 }
