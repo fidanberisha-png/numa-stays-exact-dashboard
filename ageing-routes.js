@@ -118,6 +118,7 @@ module.exports = function (getToken) {
     }
     log.push(Date.now());
   }
+  async function getEx(url, h) {
     let wait = 1200;
     let last = null;
     for (let i = 0; i < 4; i++) {
