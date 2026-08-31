@@ -386,13 +386,13 @@ function onDashboardChange(v) {
 shell();
 conn();
 loadDivisions();
-setInterval(function () { conn(); load(); }, 300000);
+setInterval(function () { conn(); load(); }, 7200000);
 
 // ===== NUMA: entity whitelist + consolidated view + UI extensions =====
 (function () {
   if (window.__numaPatch) return;
   window.__numaPatch = 1;
-  var NF = window.fetch, AMT = 'all', LAST = null, SIG = '', FIRST = true, VIEW = 'details', ACTIVE_ENT = null, SAVED_DETAILS_DIV = null;
+  var NF = window.fetch, AMT = 'all', LAST = null, SIG = '', FIRST = true, VIEW = 'details', ACTIVE_ENT = null, SAVED_DETAILS_DIV = null, CONS = { key: null, p: null, done: null, at: 0 }, PROG = { done: 0, total: 0 };
   var ENT = [
     ['HQ', 1000, 3784237, 'Numa Group SE'],
     ['DACH', 900, 3745758, 'Numa Deutschland GmbH'],
@@ -427,7 +427,7 @@ setInterval(function () { conn(); load(); }, 300000);
         var bad = j && j.errors && !Array.isArray(j.errors) && Object.keys(j.errors).length > 0;
         if (r.status === 200 && !bad) return j;
       } catch (e) { }
-      await nap(1500);
+      await nap(700);
     }
     return { accounts: [], totals: { b1: 0, b2: 0, b3: 0, b4: 0, total: 0 }, itemCount: 0, __err: 1 };
   }
@@ -441,11 +441,34 @@ setInterval(function () { conn(); load(); }, 300000);
     }
     if (url.indexOf('/api/ageing-') > -1 && url.indexOf('division=selected') > -1) {
       var u = new URL(url, location.origin), ep = u.pathname, date = u.searchParams.get('date'), rt = u.searchParams.get('referTo');
-      return (async function () {
-        var acc = [], T = { total: 0 }, n = 0, errs = [], per = [], BKZ = null;
+      var ckey = ep + '|' + date + '|' + rt + '|' + getPick().join(',');
+      if (CONS.key === ckey && CONS.p) { return CONS.p.then(function (o) { return jr(o); }); }
+      if (CONS.key === ckey && CONS.done && (Date.now() - CONS.at) < 45000) { return Promise.resolve(jr(CONS.done)); }
+      CONS.key = ckey; CONS.done = null;
+      // The entities are read next to each other, six at a time, and the same
+      // consolidated read is never started twice: the second caller simply waits
+      // for the first one. That is what makes the consolidated view quick.
+      CONS.p = (async function () {
         var LIST = pickedEnt();
+        var got = new Array(LIST.length);
+        PROG = { done: 0, total: LIST.length };
+        window.NUMA_PROG = PROG;
+        var next = 0;
+        async function lane() {
+          for (;;) {
+            var q = next++;
+            if (q >= LIST.length) { return; }
+            got[q] = await getOne(ep, LIST[q][2], date, rt);
+            PROG.done = PROG.done + 1;
+            SIG = '';
+          }
+        }
+        var runners = [];
+        for (var w = 0; w < 6 && w < LIST.length; w++) { runners.push(lane()); }
+        await Promise.all(runners);
+        var acc = [], T = { total: 0 }, n = 0, errs = [], per = [], BKZ = null;
         for (var i = 0; i < LIST.length; i++) {
-          var m = LIST[i], j = await getOne(ep, m[2], date, rt), t = j.totals || {};
+          var m = LIST[i], j = got[i] || {}, t = j.totals || {};
           if (!BKZ && j.buckets && j.buckets.length) { BKZ = j.buckets; }
           var kk = BKZ ? BKZ.map(function (b) { return b.key; }) : ['b1', 'b2', 'b3', 'b4'];
           kk.concat(['total']).forEach(function (k) { T[k] = (Number(T[k]) || 0) + (Number(t[k]) || 0); });
@@ -455,14 +478,16 @@ setInterval(function () { conn(); load(); }, 300000);
           kk.forEach(function (k) { pe[k] = Number(t[k]) || 0; });
           per.push(pe);
           (Array.isArray(j.accounts) ? j.accounts : []).forEach(function (a) { a.name = (a.name || '') + ' [' + m[1] + ']'; a.entity = m[1]; a.region = m[0]; acc.push(a); });
-          await nap(250);
         }
         acc.sort(function (x, y) { return (Number(y.total) || 0) - (Number(x.total) || 0); });
         window.NUMA_PER_ENTITY = per;
         LAST = { totals: T, accounts: acc };
         SIG = '';
-        return jr({ referTo: rt, referenceDate: date, division: LIST.length + (LIST.length === 1 ? ' selected entity' : ' selected entities'), consolidated: true, currency: 'EUR', source: 'Exact Online', buckets: BKZ, accounts: acc, totals: T, itemCount: n, errors: errs, lastUpdated: new Date().toISOString() });
+        var payload = { referTo: rt, referenceDate: date, division: LIST.length + (LIST.length === 1 ? ' selected entity' : ' selected entities'), consolidated: true, currency: 'EUR', source: 'Exact Online', buckets: BKZ, accounts: acc, totals: T, itemCount: n, errors: errs, lastUpdated: new Date().toISOString() };
+        CONS.done = payload; CONS.at = Date.now(); CONS.p = null;
+        return payload;
       })();
+      return CONS.p.then(function (o) { return jr(o); });
     }
     var p = NF.call(window, input, init);
     if (url.indexOf('/api/ageing-') > -1) {
@@ -1067,7 +1092,7 @@ layout();
 var box = document.getElementById('summaryWrap');
 if (!box) return;
 var acc = (LAST && LAST.accounts) ? LAST.accounts : [];
-if (!acc.length) { box.innerHTML = '<div class="state">Loading live data from Exact Online...</div>'; return; }
+if (!acc.length) { box.innerHTML = '<div class="state">Reading live data from Exact Online... ' + (PROG.total ? (PROG.done + ' of ' + PROG.total + ' entities loaded.') : '') + '</div>'; return; }
 var isAP = (document.getElementById('dashboard') || {}).value !== 'ar';
 var who = isAP ? 'Suppliers' : 'Customers';
 var one = isAP ? 'Vendor' : 'Customer';
