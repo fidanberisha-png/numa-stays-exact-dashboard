@@ -10,6 +10,14 @@ dotenv.config();
 const app = express();
 app.set('trust proxy', 1);
 const PORT = process.env.PORT || 3000;
+// Before a report is answered the access token is renewed when it is at the end
+// of its ten minutes. Without this a report could still be sent with a token
+// that Exact Online had already let expire.
+app.use(async function (req, res, next) {
+    try { if (tokenData && isTokenExpired()) { await refreshToken(); } }
+    catch (e) { }
+    next();
+});
 app.use(require('./exact-routes')(function () { return tokenData; }));
 app.use(require('./ageing-routes')(function () { return tokenData; }));
 app.use(require('./gl-balance-routes')(function () { return tokenData; }));
@@ -98,7 +106,7 @@ function loadToken() {
 let tokenData = loadToken();
 let lastRefresh = Date.now();
 let refuseCount = 0;
-const REFRESH_INTERVAL = 60 * 1000;
+const REFRESH_INTERVAL = 20 * 1000;
 
 // ====================================
 // OAuth Routes
@@ -185,14 +193,27 @@ app.get('/api/status', (req, res) => {
 // Helper Functions
 // ====================================
 
+// Exact Online gives an access token for ten minutes and accepts a renewal only
+// near the end of that window. Renewing already after six minutes was refused
+// every single time, which is why the connection died a few minutes after every
+// login. The token is now renewed about forty-five seconds before it expires.
 function isTokenExpired() {
     if (!tokenData) return false;
-    const expiresIn = tokenData.expires_in * 1000;
-    const createdAt = tokenData.created_at;
-    return (Date.now() - createdAt) > (expiresIn * 0.6);
+    const life = (Number(tokenData.expires_in) || 600) * 1000;
+    const born = Number(tokenData.created_at) || 0;
+    if (!born) return true;
+    return (Date.now() - born) > (life - 45000);
 }
 
+let refreshing = null;
+// Only one renewal may run at a time. Two calls that carry the same one-time
+// refresh token is exactly what Exact Online answers with a refusal.
 async function refreshToken() {
+    if (refreshing) { return refreshing; }
+    refreshing = doRefreshToken();
+    try { return await refreshing; } finally { refreshing = null; }
+}
+async function doRefreshToken() {
     try {
           const response = await axios.post(EXACT_TOKEN_URL, new URLSearchParams({
                   grant_type: 'refresh_token',
@@ -208,19 +229,20 @@ async function refreshToken() {
           console.log('Token refreshed successfully');
                 saveToken();
     } catch (error) {
-          console.error('Token refresh failed:', error.message);
+          const body = error.response && error.response.data ? JSON.stringify(error.response.data) : '';
+          console.error('Token refresh failed:', error.message, body);
                 if (error.response && error.response.status === 400) {
                                 // Exact sometimes refuses one single refresh (a second call that
                                 // used the same one-time token, or a hiccup on their side). Giving
                                 // the connection up after the first refusal is what emptied the
                                 // dashboards, so it is only dropped after three refusals in a row.
                                 refuseCount = refuseCount + 1;
-                                if (refuseCount >= 3) {
+                                if (refuseCount >= 5) {
                                                 tokenData = null;
                                                 saveToken();
-                                                console.error('Exact refused the refresh token three times, press Connect Exact Online again');
+                                                console.error('Exact refused the refresh token five times, press Connect Exact Online again');
                                 } else {
-                                                console.error('Exact refused this refresh, trying again in a minute (' + refuseCount + '/3)');
+                                                console.error('Exact refused this refresh, trying again shortly (' + refuseCount + '/5)');
                                 }
                 }
     }
