@@ -445,7 +445,7 @@ setInterval(function () { conn(); load(); }, 7200000);
       if (CONS.key === ckey && CONS.p) { return CONS.p.then(function (o) { return jr(o); }); }
       if (CONS.key === ckey && CONS.done && (Date.now() - CONS.at) < 45000) { return Promise.resolve(jr(CONS.done)); }
       CONS.key = ckey; CONS.done = null;
-      // The entities are read next to each other, six at a time, and the same
+      // The entities are all read next to each other and the same
       // consolidated read is never started twice: the second caller simply waits
       // for the first one. That is what makes the consolidated view quick.
       CONS.p = (async function () {
@@ -464,7 +464,7 @@ setInterval(function () { conn(); load(); }, 7200000);
           }
         }
         var runners = [];
-        for (var w = 0; w < 6 && w < LIST.length; w++) { runners.push(lane()); }
+        for (var w = 0; w < 20 && w < LIST.length; w++) { runners.push(lane()); }
         await Promise.all(runners);
         var acc = [], T = { total: 0 }, n = 0, errs = [], per = [], BKZ = null;
         for (var i = 0; i < LIST.length; i++) {
