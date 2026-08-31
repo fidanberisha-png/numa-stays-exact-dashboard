@@ -431,15 +431,32 @@ setInterval(function () { conn(); load(); }, 7200000);
     }
     return { accounts: [], totals: { b1: 0, b2: 0, b3: 0, b4: 0, total: 0 }, itemCount: 0, __err: 1 };
   }
+  // The page first reads the entity of the Exact login and only afterwards
+  // switches to the consolidated view. That first answer used to land on the
+  // screen after the consolidated one and pushed all other entities away, so
+  // until somebody really picks an entity in the dropdown every read is sent to
+  // the consolidated view.
+  var USERPICK = false;
+  document.addEventListener('change', function (ev) {
+    if (ev && ev.isTrusted && ev.target && ev.target.id === 'company') { USERPICK = true; }
+  }, true);
   window.fetch = function (input, init) {
     var url = (typeof input === 'string') ? input : ((input && input.url) || '');
+    if (url.indexOf('/api/ageing-') > -1 && !USERPICK) {
+      var dvv = null;
+      try { dvv = new URL(url, location.origin).searchParams.get('division'); } catch (e) { }
+      if (dvv && dvv !== 'selected' && dvv !== 'consolidated') {
+        url = url.replace('division=' + encodeURIComponent(dvv), 'division=selected');
+        input = url;
+      }
+    }
     if (url.indexOf('/api/divisions') > -1) {
       return NF.call(window, input, init).then(function (r) { return r.json(); }).then(function (j) {
         var out = ENT.map(function (m) { return { code: m[2], human: m[1], region: m[0], name: m[3], label: m[1] + ' - ' + m[3], currency: 'EUR' }; });
         return jr({ current: j && j.current, divisions: out });
       });
     }
-    if (url.indexOf('/api/ageing-') > -1 && url.indexOf('division=selected') > -1) {
+    if (url.indexOf('/api/ageing-') > -1 && (url.indexOf('division=selected') > -1 || url.indexOf('division=consolidated') > -1)) {
       var u = new URL(url, location.origin), ep = u.pathname, date = u.searchParams.get('date'), rt = u.searchParams.get('referTo');
       var ckey = ep + '|' + date + '|' + rt + '|' + getPick().join(',');
       if (CONS.key === ckey && CONS.p) { return CONS.p.then(function (o) { return jr(o); }); }
