@@ -454,6 +454,56 @@ setInterval(function () { conn(); load(); }, 7200000);
         PROG = { done: 0, total: LIST.length };
         window.NUMA_PROG = PROG;
         var next = 0;
+        // Every entity is painted the moment it arrives, so the quick ones are
+        // already on the screen while a heavy one like 900 or 610 is still read.
+        function build() {
+          var acc = [], T = { total: 0 }, n = 0, errs = [], per = [], BKZ = null;
+          for (var i = 0; i < LIST.length; i++) {
+            var m = LIST[i], j = got[i], t = (j && j.totals) || {};
+            if (!j) { continue; }
+            if (!BKZ && j.buckets && j.buckets.length) { BKZ = j.buckets; }
+            var kk = BKZ ? BKZ.map(function (b) { return b.key; }) : ['b1', 'b2', 'b3', 'b4'];
+            kk.concat(['total']).forEach(function (k) { T[k] = (Number(T[k]) || 0) + (Number(t[k]) || 0); });
+            n += Number(j.itemCount) || 0;
+            if (j.__err) errs.push(m[1] + ': not available');
+            var pe = { region: m[0], human: m[1], name: m[3], total: Number(t.total) || 0, accounts: Number(j.itemCount) || 0 };
+            kk.forEach(function (k) { pe[k] = Number(t[k]) || 0; });
+            per.push(pe);
+            (Array.isArray(j.accounts) ? j.accounts : []).forEach(function (a) {
+              // The entity is put in the name only once, also when the screen is
+              // painted again while the other entities are still coming in.
+              if (a.__base === undefined) { a.__base = a.name || ''; }
+              a.name = a.__base + ' [' + m[1] + ']';
+              a.entity = m[1];
+              a.region = m[0];
+              acc.push(a);
+            });
+          }
+          acc.sort(function (x, y) { return (Number(y.total) || 0) - (Number(x.total) || 0); });
+          window.NUMA_PER_ENTITY = per;
+          LAST = { totals: T, accounts: acc };
+          SIG = '';
+          return { referTo: rt, referenceDate: date, division: LIST.length + (LIST.length === 1 ? ' selected entity' : ' selected entities'), consolidated: true, currency: 'EUR', source: 'Exact Online', buckets: BKZ, accounts: acc, totals: T, itemCount: n, errors: errs, lastUpdated: new Date().toISOString() };
+        }
+        // The status block under the report says which entities are in and which
+        // ones are still being read.
+        function info() {
+          if (!window.NUMA_INFO) { return; }
+          var inn = [], out = [];
+          for (var i = 0; i < LIST.length; i++) { (got[i] ? inn : out).push(LIST[i][1]); }
+          window.NUMA_INFO.set({ loaded: inn, pending: out });
+        }
+        function paint() {
+          var part = build();
+          try {
+            if (window.S) { window.S.data = part; }
+            if (typeof window.draw === 'function') { window.draw(); }
+            if (typeof window.stamp === 'function') { window.stamp(); }
+          } catch (e) { }
+          try { ui(); } catch (e) { }
+          info();
+        }
+        info();
         async function lane() {
           for (;;) {
             var q = next++;
@@ -461,29 +511,14 @@ setInterval(function () { conn(); load(); }, 7200000);
             got[q] = await getOne(ep, LIST[q][2], date, rt);
             PROG.done = PROG.done + 1;
             SIG = '';
+            paint();
           }
         }
         var runners = [];
         for (var w = 0; w < 20 && w < LIST.length; w++) { runners.push(lane()); }
         await Promise.all(runners);
-        var acc = [], T = { total: 0 }, n = 0, errs = [], per = [], BKZ = null;
-        for (var i = 0; i < LIST.length; i++) {
-          var m = LIST[i], j = got[i] || {}, t = j.totals || {};
-          if (!BKZ && j.buckets && j.buckets.length) { BKZ = j.buckets; }
-          var kk = BKZ ? BKZ.map(function (b) { return b.key; }) : ['b1', 'b2', 'b3', 'b4'];
-          kk.concat(['total']).forEach(function (k) { T[k] = (Number(T[k]) || 0) + (Number(t[k]) || 0); });
-          n += Number(j.itemCount) || 0;
-          if (j.__err) errs.push(m[1] + ': not available');
-          var pe = { region: m[0], human: m[1], name: m[3], total: Number(t.total) || 0, accounts: Number(j.itemCount) || 0 };
-          kk.forEach(function (k) { pe[k] = Number(t[k]) || 0; });
-          per.push(pe);
-          (Array.isArray(j.accounts) ? j.accounts : []).forEach(function (a) { a.name = (a.name || '') + ' [' + m[1] + ']'; a.entity = m[1]; a.region = m[0]; acc.push(a); });
-        }
-        acc.sort(function (x, y) { return (Number(y.total) || 0) - (Number(x.total) || 0); });
-        window.NUMA_PER_ENTITY = per;
-        LAST = { totals: T, accounts: acc };
-        SIG = '';
-        var payload = { referTo: rt, referenceDate: date, division: LIST.length + (LIST.length === 1 ? ' selected entity' : ' selected entities'), consolidated: true, currency: 'EUR', source: 'Exact Online', buckets: BKZ, accounts: acc, totals: T, itemCount: n, errors: errs, lastUpdated: new Date().toISOString() };
+        var payload = build();
+        info();
         CONS.done = payload; CONS.at = Date.now(); CONS.p = null;
         return payload;
       })();
