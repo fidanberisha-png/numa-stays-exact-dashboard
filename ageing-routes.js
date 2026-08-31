@@ -98,8 +98,11 @@ module.exports = function (getToken) {
   // for a few minutes and, if Exact still refuses, the rows already collected
   // (or the last known list) are used instead of showing an empty screen.
   const CALL_LOG = {};
-  const MAX_PER_MIN = 55;
+  const MAX_PER_MIN = 58;
   const ROWS_TTL_MS = 10 * 60 * 1000;
+  // A list that is older than the fresh window is still handed over at once and
+  // renewed in the background, so a screen never waits for a full read twice.
+  const STALE_MAX_MS = 24 * 60 * 60 * 1000;
   const rowsCache = {};
   function sleep(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
   // Exact counts the minute limit per division, so the queue is kept per division
@@ -171,6 +174,10 @@ module.exports = function (getToken) {
     const key = division + '|' + path;
     const hit = rowsCache[key];
     if (hit && (Date.now() - hit.at) < ROWS_TTL_MS) { return hit.rows; }
+    if (hit && (Date.now() - hit.at) < STALE_MAX_MS) {
+      if (!jobs[key] || jobs[key].done) { startJob(key, division, path, h, maxPages); }
+      return hit.rows;
+    }
     const running = jobs[key] && !jobs[key].done ? jobs[key] : null;
     const job = running || startJob(key, division, path, h, maxPages);
     const until = Date.now() + (waitMs === undefined ? 40000 : waitMs);
@@ -414,5 +421,53 @@ module.exports = function (getToken) {
   });
   router.get('/api/ageing-ap', function (req, res) { return handleAgeing(req, res, { sources: AP_SOURCES, edges: AP_EDGES, gl: AP_DESCRIPTIONS }); });
   router.get('/api/ageing-ar', function (req, res) { return handleAgeing(req, res, { sources: AR_SOURCES, edges: AR_EDGES, gl: [] }); });
+  // ---- Keeping the numbers warm ------------------------------------------
+  // Exact Online hands out sixty rows per call and only about sixty calls a
+  // minute per company, so the very first read of a large entity can never be
+  // quick. The server therefore reads every entity by itself, shortly after the
+  // start and again every few minutes, and keeps the rows in memory. A dashboard
+  // that is opened afterwards is answered from memory in well under a second and
+  // the renewal never blocks the screen.
+  const WARM_START_MS = 15000;
+  const WARM_EVERY_MS = 6 * 60 * 1000;
+  const WARM_LANES = 8;
+  let warmRunning = false;
+  let warmInfo = { at: null, done: 0, total: 0, ms: 0 };
+  async function warmAll() {
+    if (warmRunning) return;
+    const h = headers();
+    if (!h) return;
+    warmRunning = true;
+    const started = Date.now();
+    try {
+      const all = await getAllDivisions(h);
+      const list = [];
+      all.forEach(function (d) {
+        list.push({ division: d.code, path: AP_SOURCES[0] });
+        list.push({ division: d.code, path: AR_SOURCES[0] });
+      });
+      warmInfo = { at: started, done: 0, total: list.length, ms: 0 };
+      let next = 0;
+      async function warmLane() {
+        while (next < list.length) {
+          const t = list[next];
+          next = next + 1;
+          try { await fetchAll(t.division, t.path, h, 200, 240000); }
+          catch (e) { /* the next round tries again */ }
+          warmInfo.done = warmInfo.done + 1;
+        }
+      }
+      const lanes = [];
+      for (let i = 0; i < WARM_LANES; i++) { lanes.push(warmLane()); }
+      await Promise.all(lanes);
+      warmInfo.ms = Date.now() - started;
+    } catch (e) { /* the next round tries again */ }
+    warmRunning = false;
+  }
+  setTimeout(function () { warmAll(); }, WARM_START_MS);
+  setInterval(function () { warmAll(); }, WARM_EVERY_MS);
+  router.get('/api/warm', function (req, res) {
+    res.json({ running: warmRunning, info: warmInfo, cached: Object.keys(rowsCache).length });
+  });
   return router;
 };
