@@ -457,10 +457,11 @@ setInterval(function () { conn(); load(); }, 7200000);
         // Every entity is painted the moment it arrives, so the quick ones are
         // already on the screen while a heavy one like 900 or 610 is still read.
         function build() {
-          var acc = [], T = { total: 0 }, n = 0, errs = [], per = [], BKZ = null;
+          var acc = [], T = { total: 0 }, n = 0, errs = [], per = [], BKZ = null, waiting = 0;
           for (var i = 0; i < LIST.length; i++) {
             var m = LIST[i], j = got[i], t = (j && j.totals) || {};
             if (!j) { continue; }
+            if (j.loading) { waiting = waiting + 1; }
             if (!BKZ && j.buckets && j.buckets.length) { BKZ = j.buckets; }
             var kk = BKZ ? BKZ.map(function (b) { return b.key; }) : ['b1', 'b2', 'b3', 'b4'];
             kk.concat(['total']).forEach(function (k) { T[k] = (Number(T[k]) || 0) + (Number(t[k]) || 0); });
@@ -483,14 +484,22 @@ setInterval(function () { conn(); load(); }, 7200000);
           window.NUMA_PER_ENTITY = per;
           LAST = { totals: T, accounts: acc };
           SIG = '';
-          return { referTo: rt, referenceDate: date, division: LIST.length + (LIST.length === 1 ? ' selected entity' : ' selected entities'), consolidated: true, currency: 'EUR', source: 'Exact Online', buckets: BKZ, accounts: acc, totals: T, itemCount: n, errors: errs, lastUpdated: new Date().toISOString() };
+          var pay = { referTo: rt, referenceDate: date, division: LIST.length + (LIST.length === 1 ? ' selected entity' : ' selected entities'), consolidated: true, currency: 'EUR', source: 'Exact Online', buckets: BKZ, accounts: acc, totals: T, itemCount: n, errors: errs, lastUpdated: new Date().toISOString() };
+          // An entity whose list is not read to the last page yet keeps the screen
+          // asking for the rest, so the total never stays quietly too low.
+          if (waiting) { pay.loading = { entities: waiting, rows: n, pages: 0 }; }
+          return pay;
         }
         // The status block under the report says which entities are in and which
         // ones are still being read.
         function info() {
           if (!window.NUMA_INFO) { return; }
           var inn = [], out = [];
-          for (var i = 0; i < LIST.length; i++) { (got[i] ? inn : out).push(LIST[i][1]); }
+          for (var i = 0; i < LIST.length; i++) {
+            var g = got[i];
+            var ready = g && !g.loading && !g.__err;
+            (ready ? inn : out).push(LIST[i][1]);
+          }
           window.NUMA_INFO.set({ loaded: inn, pending: out });
         }
         function paint() {
