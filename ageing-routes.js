@@ -126,14 +126,19 @@ module.exports = function (getToken) {
     let last = null;
     for (let i = 0; i < 4; i++) {
       await slot(url);
-      try { return await axios.get(url, { headers: h, timeout: 45000 }); }
+      // A long read is allowed to take minutes, and the access token of Exact
+      // Online lives only ten. The header is therefore taken again for every
+      // single call, and a refusal because of an expired token is retried.
+      const hh = (typeof h === 'function') ? (h() || {}) : h;
+      try { return await axios.get(url, { headers: hh, timeout: 45000 }); }
       catch (e) {
         last = e;
         const st = e.response ? e.response.status : 0;
-        if (st !== 429 && st !== 502 && st !== 503) throw e;
+        if (st !== 401 && st !== 429 && st !== 502 && st !== 503) throw e;
         if (i === 3) throw e;
         const ra = Number(e.response && e.response.headers ? e.response.headers['retry-after'] : 0);
         let ms = ra > 0 ? ra * 1000 : wait;
+        if (st === 401) { ms = 1500; }
         if (ms > 8000) { ms = 8000; }
         await sleep(ms);
         wait = wait * 2;
@@ -148,23 +153,29 @@ module.exports = function (getToken) {
   // so every other view of the same entity is instant.
   const jobs = {};
   function startJob(key, division, path, h, maxPages) {
-    const job = { at: Date.now(), pages: 0, rows: [], done: false, err: null };
+    const job = { at: Date.now(), pages: 0, rows: [], done: false, err: null, complete: false };
     jobs[key] = job;
     (async function () {
       let url = BASE + '/' + division + '/' + path;
       try {
         while (url && job.pages < (maxPages || 200)) {
-          const r = await getEx(url, h);
+          const r = await getEx(url, function () { return headers() || h; });
           const d = r.data && r.data.d ? r.data.d : r.data;
           const part = d && d.results ? d.results : (Array.isArray(d) ? d : []);
           job.rows = job.rows.concat(part);
           url = d && d.__next ? d.__next : null;
           job.pages = job.pages + 1;
         }
-        rowsCache[key] = { at: Date.now(), rows: job.rows };
+        // Only when the paging really reached the end is the list complete. If it
+        // stopped at the page limit there is still more waiting at Exact Online.
+        job.complete = !url;
+        rowsCache[key] = { at: Date.now(), rows: job.rows, complete: job.complete };
       } catch (e) {
         job.err = e;
-        if (job.rows.length) { rowsCache[key] = { at: Date.now(), rows: job.rows }; }
+        // A list that was cut off is kept only as a stopgap, never as the truth.
+        if (job.rows.length && !(rowsCache[key] && rowsCache[key].complete)) {
+          rowsCache[key] = { at: Date.now(), rows: job.rows, complete: false };
+        }
       }
       job.done = true;
     })();
@@ -173,8 +184,9 @@ module.exports = function (getToken) {
   async function fetchAll(division, path, h, maxPages, waitMs) {
     const key = division + '|' + path;
     const hit = rowsCache[key];
-    if (hit && (Date.now() - hit.at) < ROWS_TTL_MS) { return hit.rows; }
-    if (hit && (Date.now() - hit.at) < STALE_MAX_MS) {
+    const good = hit && hit.complete;
+    if (good && (Date.now() - hit.at) < ROWS_TTL_MS) { return hit.rows; }
+    if (good && (Date.now() - hit.at) < STALE_MAX_MS) {
       if (!jobs[key] || jobs[key].done) { startJob(key, division, path, h, maxPages); }
       return hit.rows;
     }
@@ -182,16 +194,20 @@ module.exports = function (getToken) {
     const job = running || startJob(key, division, path, h, maxPages);
     const until = Date.now() + (waitMs === undefined ? 40000 : waitMs);
     while (!job.done && Date.now() < until) { await sleep(400); }
-    if (job.done) {
-      if (job.rows.length) { return job.rows; }
-      if (hit) { return hit.rows; }
-      if (job.err) { throw job.err; }
-      return job.rows;
+    if (job.done && job.complete) { return job.rows; }
+    let part = job.rows;
+    if (hit && hit.rows.length > part.length) { part = hit.rows; }
+    // The reading goes on in the background; a new attempt is started at most
+    // once every half minute so Exact Online is not hammered.
+    if (job.done && (Date.now() - job.at) > 30000) { startJob(key, division, path, h, maxPages); }
+    if (!part.length) {
+      const e = new Error('Still reading from Exact Online');
+      e.loading = { pages: job.pages, rows: 0 };
+      throw e;
     }
-    if (hit) { return hit.rows; }
-    const e = new Error('Still reading from Exact Online');
-    e.loading = { pages: job.pages, rows: job.rows.length };
-    throw e;
+    const out = part.slice();
+    out.incomplete = { pages: job.pages, rows: part.length };
+    return out;
   }
   function toDate(v) {
     if (!v) return null;
@@ -314,7 +330,7 @@ module.exports = function (getToken) {
   async function fetchRowsFor(division, sources, h, errors, waitMs) {
     let rows = null; let source = null; let loading = null;
     for (let i = 0; i < sources.length && !rows && !loading; i++) {
-      try { rows = await fetchAll(division, sources[i], h, 200, waitMs); source = sources[i]; }
+      try { rows = await fetchAll(division, sources[i], h, 600, waitMs); source = sources[i]; if (rows && rows.incomplete) { loading = rows.incomplete; } }
       catch (e) {
         if (e && e.loading) { loading = e.loading; rows = null; break; }
         errors[division + ':' + sources[i]] = e.response && e.response.data ? e.response.data : e.message; rows = null;
@@ -458,7 +474,7 @@ module.exports = function (getToken) {
         while (next < list.length) {
           const t = list[next];
           next = next + 1;
-          try { await fetchAll(t.division, t.path, h, 200, 240000); }
+          try { await fetchAll(t.division, t.path, h, 600, 240000); }
           catch (e) { /* the next round tries again */ }
           warmInfo.done = warmInfo.done + 1;
         }
