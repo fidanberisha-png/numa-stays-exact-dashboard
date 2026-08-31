@@ -128,6 +128,7 @@
   }
 
   var SUM = { busy:false, rows:null, progress:0, loaded:false };
+  var CURTAB = 'details';
   var SUM_YEARS = [2024, 2025, 2026, 2027];
   var SMONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
   function sumMonthIndex(y, m) { return y * 12 + (m - 1); }
@@ -154,13 +155,16 @@
       var j = {}; try { j = await r.json(); } catch (_) {}
       return { ok: r.ok, j: j };
     }
-    for (var i = 0; i < ENT.length; i++) {
+    // Five entities are read next to each other, so the summary is built in a
+    // fraction of the old time. The rows keep the order of ENT.
+    var slots = new Array(ENT.length);
+    var nextEnt = 0;
+    async function oneEntity(i) {
       var e = ENT[i]; var dv = e[2];
       var entRow = { code: e[1], name: e[3], months: {}, total: 0 };
       try {
         var res = await fetchOne(dv);
-        if (!res.ok || !res.j || !res.j.rows) { await sumWait(1500); res = await fetchOne(dv); }
-        if (!res.ok || !res.j || !res.j.rows) { await sumWait(3000); res = await fetchOne(dv); }
+        if (!res.ok || !res.j || !res.j.rows) { await sumWait(900); res = await fetchOne(dv); }
         if (res.ok && res.j && res.j.rows) {
           res.j.rows.forEach(function (row) {
             var st = sumParseDMY(row.start), en = sumParseDMY(row.end);
@@ -179,11 +183,22 @@
           });
         }
       } catch (err) {}
-      SUM.rows.push(entRow);
-      SUM.progress = i + 1;
+      slots[i] = entRow;
+      SUM.progress = (SUM.progress || 0) + 1;
+      SUM.rows = slots.filter(function (r) { return !!r; });
       drawSummary();
-      await sumWait(500);
     }
+    async function sumLane() {
+      for (;;) {
+        var i = nextEnt++;
+        if (i >= ENT.length) { return; }
+        await oneEntity(i);
+      }
+    }
+    var sumRunners = [];
+    for (var w = 0; w < 5 && w < ENT.length; w++) { sumRunners.push(sumLane()); }
+    await Promise.all(sumRunners);
+    SUM.rows = slots.filter(function (r) { return !!r; });
     SUM.busy = false; SUM.loaded = true;
     drawSummary();
   }
@@ -228,6 +243,7 @@
   }
 
   function setTab(which) {
+    CURTAB = which;
     var isSum = (which === 'summary');
     var dp = el('detailsPane'), sp = el('summaryPane');
     if (dp) dp.style.display = isSum ? 'none' : '';
@@ -702,6 +718,12 @@
     shell();
     conn();
     setInterval(conn, 60000);
+    // The page refreshes itself every two hours.
+    setInterval(function () {
+      conn();
+      if (CURTAB === 'summary') { SUM.loaded = false; SUM.busy = false; loadSummary(); }
+      else { S.fresh = true; run(); }
+    }, 7200000);
   }
 
   boot();
