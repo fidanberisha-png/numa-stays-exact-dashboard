@@ -155,7 +155,7 @@
       var j = {}; try { j = await r.json(); } catch (_) {}
       return { ok: r.ok, j: j };
     }
-    // Five entities are read next to each other, so the summary is built in a
+    // All entities are read next to each other, so the summary is built in a
     // fraction of the old time. The rows keep the order of ENT.
     var slots = new Array(ENT.length);
     var nextEnt = 0;
@@ -196,7 +196,7 @@
       }
     }
     var sumRunners = [];
-    for (var w = 0; w < 5 && w < ENT.length; w++) { sumRunners.push(sumLane()); }
+    for (var w = 0; w < 20 && w < ENT.length; w++) { sumRunners.push(sumLane()); }
     await Promise.all(sumRunners);
     SUM.rows = slots.filter(function (r) { return !!r; });
     SUM.busy = false; SUM.loaded = true;
