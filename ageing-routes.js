@@ -97,25 +97,31 @@ module.exports = function (getToken) {
   // queued, a 429 is retried with a short backoff, every finished list is kept
   // for a few minutes and, if Exact still refuses, the rows already collected
   // (or the last known list) are used instead of showing an empty screen.
-  const CALL_LOG = [];
-  const MAX_PER_MIN = 58;
+  const CALL_LOG = {};
+  const MAX_PER_MIN = 55;
   const ROWS_TTL_MS = 10 * 60 * 1000;
   const rowsCache = {};
   function sleep(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
-  async function slot() {
-    for (let i = 0; i < 12; i++) {
+  // Exact counts the minute limit per division, so the queue is kept per division
+  // as well. Nineteen entities are then read next to each other instead of
+  // sharing one single budget of 58 calls a minute.
+  function divOf(u) { const m = /\/api\/v1\/(\d+)\//.exec(String(u || '')); return m ? m[1] : 'x'; }
+  async function slot(u) {
+    const k = divOf(u);
+    if (!CALL_LOG[k]) { CALL_LOG[k] = []; }
+    const log = CALL_LOG[k];
+    for (let i = 0; i < 20; i++) {
       const now = Date.now();
-      while (CALL_LOG.length && (now - CALL_LOG[0]) > 60000) { CALL_LOG.shift(); }
-      if (CALL_LOG.length < MAX_PER_MIN) { CALL_LOG.push(now); return; }
+      while (log.length && (now - log[0]) > 60000) { log.shift(); }
+      if (log.length < MAX_PER_MIN) { log.push(now); return; }
       await sleep(1000);
     }
-    CALL_LOG.push(Date.now());
+    log.push(Date.now());
   }
-  async function getEx(url, h) {
     let wait = 1200;
     let last = null;
     for (let i = 0; i < 4; i++) {
-      await slot();
+      await slot(url);
       try { return await axios.get(url, { headers: h, timeout: 45000 }); }
       catch (e) {
         last = e;
