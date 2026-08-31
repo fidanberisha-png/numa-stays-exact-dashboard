@@ -127,12 +127,52 @@ module.exports = function (getToken) {
         return { Authorization: 'Bearer ' + t.access_token, Accept: 'application/json' };
     }
 
+    // ---- Exact Online throttle and 429 retries ---------------------------
+    // Exact allows only about sixty calls a minute per company. Reading a large
+    // entity therefore has to wait its turn, and a refusal is retried with a
+    // short backoff instead of turning into an error on the screen.
+    const CALL_LOG = {};
+    const MAX_PER_MIN = 55;
+    function sleep(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
+    function divOf(u) { const m = /\/api\/v1\/(\d+)\//.exec(String(u || '')); return m ? m[1] : 'x'; }
+    async function slot(u) {
+        const k = divOf(u);
+        if (!CALL_LOG[k]) { CALL_LOG[k] = []; }
+        const log = CALL_LOG[k];
+        for (let i = 0; i < 30; i++) {
+            const now = Date.now();
+            while (log.length && (now - log[0]) > 60000) { log.shift(); }
+            if (log.length < MAX_PER_MIN) { log.push(now); return; }
+            await sleep(1000);
+        }
+        log.push(Date.now());
+    }
+    async function getEx(url, h) {
+        let wait = 1200;
+        let last = null;
+        for (let i = 0; i < 4; i++) {
+            await slot(url);
+            try { return await axios.get(url, { headers: h, timeout: 60000 }); }
+            catch (e) {
+                last = e;
+                const st = e.response ? e.response.status : 0;
+                if (st !== 429 && st !== 502 && st !== 503) throw e;
+                if (i === 3) throw e;
+                const ra = Number(e.response && e.response.headers ? e.response.headers['retry-after'] : 0);
+                let ms = ra > 0 ? ra * 1000 : wait;
+                if (ms > 8000) { ms = 8000; }
+                await sleep(ms);
+                wait = wait * 2;
+            }
+        }
+        throw last;
+    }
     async function fetchAll(division, path, h, cap) {
         let url = BASE + '/' + division + '/' + path;
         const out = [];
         let page = 0;
         while (url) {
-            const r = await axios.get(url, { headers: h, timeout: 60000 });
+            const r = await getEx(url, h);
             const d = (r.data && r.data.d) ? r.data.d : {};
             const rows = d.results || (Array.isArray(d) ? d : []);
             rows.forEach(function (x) { out.push(x); });
