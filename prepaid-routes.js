@@ -372,11 +372,16 @@ module.exports = function (getToken) {
 
     // Everything the page needs: the journals, the clean invoice list and the
     // month by month amortisation of the chosen financial year.
-    router.get('/api/prepaid/schedule', async function (req, res) {
+    // One and the same schedule engine serves the prepaid account and, with the
+    // merged accrual accounts, the Accrued dashboard.
+    const ACC_CODES = ['251150', '270100', '270200', '271500', '271600', '271900', '272200', '272203', '272205', '272210'];
+    async function scheduleRoute(req, res, cfg) {
         const h = headers();
         if (!h) return res.status(401).json({ error: 'Not authenticated' });
         const division = req.query.division ? String(req.query.division) : null;
-        const code = req.query.code ? String(req.query.code).trim() : '160100';
+        const isAcc = !!(cfg && cfg.kind === 'accrued');
+        const codeList = isAcc ? ACC_CODES : [req.query.code ? String(req.query.code).trim() : '160100'];
+        const code = isAcc ? 'ACCRUALS' : codeList[0];
         const year = req.query.year ? parseInt(String(req.query.year), 10) : null;
         const journal = txt(req.query.journal);
         const mode = txt(req.query.mode) === 'invoice' ? 'invoice' : 'period';
@@ -388,8 +393,8 @@ module.exports = function (getToken) {
         const hit = cacheGet(ckey, fresh);
         if (hit) return res.json(hit);
         try {
-            const filter = (year ? 'FinancialYear eq ' + year + ' and ' : '') +
-                "GLAccountCode ge '" + code + "' and GLAccountCode le '" + code + "zzzz'";
+            const glWhere = codeList.map(function (c) { return "(GLAccountCode ge '" + c + "' and GLAccountCode le '" + c + "zzzz')"; }).join(' or ');
+            const filter = (year ? 'FinancialYear eq ' + year + ' and ' : '') + '(' + glWhere + ')';
             const raw = await lines(division, filter, h);
             const all = raw.map(mapLine).filter(function (l) { return l.amount !== 0; });
 
@@ -571,7 +576,9 @@ module.exports = function (getToken) {
         } catch (e) {
             return fail(res, e, 'Failed to build the prepaid schedule of this entity');
         }
-    });
+    }
+    router.get('/api/prepaid/schedule', function (req, res) { return scheduleRoute(req, res, { kind: 'prepaid' }); });
+    router.get('/api/accrued/schedule', function (req, res) { return scheduleRoute(req, res, { kind: 'accrued' }); });
 
     // Raw lines of one prepaid account for one financial year, kept for checking
     // the schedule against Exact. Nothing is left out here.
