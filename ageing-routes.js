@@ -429,8 +429,12 @@ module.exports = function (getToken) {
   // that is opened afterwards is answered from memory in well under a second and
   // the renewal never blocks the screen.
   const WARM_START_MS = 15000;
-  const WARM_EVERY_MS = 6 * 60 * 1000;
-  const WARM_LANES = 8;
+  const WARM_EVERY_MS = 10 * 60 * 1000;
+  const WARM_LANES = 6;
+  // Only the nineteen entities the dashboards actually show are kept warm. The
+  // administration holds many more companies and reading them all would eat the
+  // call budget of Exact Online for nothing.
+  const WARM_CODES = [3784237, 3745758, 3745759, 3745760, 3745740, 3751399, 3708480, 3642741, 2657065, 3383979, 3693157, 3706020, 3716405, 3741441, 3717706, 3900740, 3725452, 3732987, 3745729];
   let warmRunning = false;
   let warmInfo = { at: null, done: 0, total: 0, ms: 0 };
   async function warmAll() {
@@ -441,8 +445,10 @@ module.exports = function (getToken) {
     const started = Date.now();
     try {
       const all = await getAllDivisions(h);
+      let wanted = all.filter(function (d) { return WARM_CODES.indexOf(Number(d.code)) > -1; });
+      if (!wanted.length) { wanted = all; }
       const list = [];
-      all.forEach(function (d) {
+      wanted.forEach(function (d) {
         list.push({ division: d.code, path: AP_SOURCES[0] });
         list.push({ division: d.code, path: AR_SOURCES[0] });
       });
