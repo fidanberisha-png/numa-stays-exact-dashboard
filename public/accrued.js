@@ -539,6 +539,15 @@
     }
     var slots = new Array(ENT.length);
     var nextEnt = 0;
+    // The status block under the report says which entities are already on the
+    // screen and which ones are still being read.
+    function s1Info() {
+      if (!window.NUMA_INFO) { return; }
+      var inn = [], out = [];
+      for (var k = 0; k < ENT.length; k++) { (slots[k] ? inn : out).push(ENT[k][1]); }
+      window.NUMA_INFO.set({ loaded: inn, pending: out });
+    }
+    s1Info();
     async function one(i) {
       var e = ENT[i], dv = e[2];
       var row = { code: e[1], name: e[3], months: {}, total: 0 };
@@ -566,6 +575,7 @@
       slots[i] = row;
       SUM1.progress = SUM1.progress + 1;
       SUM1.rows = slots.filter(function (x) { return !!x; });
+      s1Info();
       drawSum1();
     }
     async function lane() {
@@ -576,6 +586,7 @@
     await Promise.all(runners);
     SUM1.rows = slots.filter(function (x) { return !!x; });
     SUM1.busy = false; SUM1.loaded = true;
+    s1Info();
     drawSum1();
   }
   function drawSum1() {
