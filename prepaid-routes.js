@@ -8,7 +8,7 @@ const axios = require('axios');
 
 const REGION = process.env.EXACT_REGION || 'nl';
 const BASE = 'https://start.exactonline.' + REGION + '/api/v1';
-const TTL = 10 * 60 * 1000;
+const TTL = 45 * 60 * 1000;
 const cache = {};
 
 // Journal 91 was used as the example of how a prepayment is written down. All
@@ -658,5 +658,54 @@ module.exports = function (getToken) {
         }
     });
 
+    // ---- Keeping the PrePaid and Accrued summary warm ---------------------
+    // The amortisation of an entity takes a while to read, so the server builds
+    // it by itself: shortly after the start and then every twenty minutes it
+    // walks through the entities of the dashboard and refills the cache. A
+    // summary that is opened afterwards is answered from memory.
+    const WARM_START_MS = 45000;
+    const WARM_EVERY_MS = 20 * 60 * 1000;
+    const WARM_LANES = 4;
+    const WARM_CODES = [3784237, 3745758, 3745759, 3745760, 3745740, 3751399, 3708480, 3642741, 2657065, 3383979, 3693157, 3706020, 3716405, 3741441, 3717706, 3900740, 3725452, 3732987, 3745729];
+    let warmRunning = false;
+    let warmInfo = { at: null, done: 0, total: 0, ms: 0 };
+    function warmOne(kind, division) {
+        return new Promise(function (resolve) {
+            let settled = false;
+            function finish() { if (!settled) { settled = true; resolve(); } }
+            const req = { query: { division: String(division), code: '160100', journal: 'all', mode: 'period', until: 'year', fresh: '1' } };
+            const res = { status: function () { return res; }, json: function () { finish(); return res; } };
+            try { scheduleRoute(req, res, { kind: kind }).then(finish, finish); }
+            catch (e) { finish(); }
+        });
+    }
+    async function warmAll() {
+        if (warmRunning) return;
+        if (!headers()) return;
+        warmRunning = true;
+        const started = Date.now();
+        const list = [];
+        WARM_CODES.forEach(function (c) { list.push({ kind: 'prepaid', division: c }); list.push({ kind: 'accrued', division: c }); });
+        warmInfo = { at: started, done: 0, total: list.length, ms: 0 };
+        let next = 0;
+        async function warmLane() {
+            while (next < list.length) {
+                const t = list[next];
+                next = next + 1;
+                try { await warmOne(t.kind, t.division); } catch (e) { /* the next round tries again */ }
+                warmInfo.done = warmInfo.done + 1;
+            }
+        }
+        const lanes = [];
+        for (let i = 0; i < WARM_LANES; i++) { lanes.push(warmLane()); }
+        try { await Promise.all(lanes); } catch (e) { /* the next round tries again */ }
+        warmInfo.ms = Date.now() - started;
+        warmRunning = false;
+    }
+    setTimeout(function () { warmAll(); }, WARM_START_MS);
+    setInterval(function () { warmAll(); }, WARM_EVERY_MS);
+    router.get('/api/prepaid/warm', function (req, res) {
+        res.json({ running: warmRunning, info: warmInfo, cached: Object.keys(cache).length });
+    });
     return router;
 };
