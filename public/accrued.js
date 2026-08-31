@@ -104,8 +104,8 @@
       '<div class="ctl"><label>&nbsp;</label><button class="btn" id="apply">Apply</button></div>',
       '<div class="ctl"><label>&nbsp;</label><button class="btn sec" id="expandAll">Expand all</button></div>',
       '</div>',
-      '<div class="vtabs" id="vtabs"><button type="button" class="vtab on" id="vSum">Summary</button><button type="button" class="vtab" id="vDet">Details</button></div>', '<div class="kpis" id="kpis"></div>',
-      '<div class="sumbox" id="sumWrap"></div>', '<div class="wrap" id="wrap"><div class="state">Choose a financial year and press Apply</div></div>',
+      '<div class="vtabs" id="vtabs"><button type="button" class="vtab on" id="vSum">Summary</button><button type="button" class="vtab" id="vDet">Details</button><button type="button" class="vtab" id="vSum1">Summary 1</button></div>', '<div class="kpis" id="kpis"></div>',
+      '<div class="sumbox" id="sumWrap"></div>', '<div class="sumbox" id="sum1Wrap" style="display:none"></div>', '<div class="wrap" id="wrap"><div class="state">Choose a financial year and press Apply</div></div>',
       '<div class="note" id="note"></div>'
     ].join('');
     el('company').value = S.entity;
@@ -116,7 +116,7 @@
     el('gl').onchange = function () { S.code = this.value; };
     el('apply').onclick = function () { run(); };
     el('refresh').onclick = function () { S.fresh = true; run(); };
-    el('expandAll').onclick = function () { expandAll(); }; el('vDet').onclick = function () { S.view = 'details'; paintView(); draw(); }; el('vSum').onclick = function () { S.view = 'summary'; paintView(); draw(); }; paintView();
+    el('expandAll').onclick = function () { expandAll(); }; el('vDet').onclick = function () { S.view = 'details'; paintView(); draw(); }; el('vSum').onclick = function () { S.view = 'summary'; paintView(); draw(); }; el('vSum1').onclick = function () { S.view = 'summary1'; paintView(); draw(); if (!SUM1.loaded && !SUM1.busy) { loadSum1(); } }; paintView();
     el('q').oninput = function () { S.q = this.value; draw(); };
     el('dashboard').value = 'accrued';
     el('dashboard').onchange = function () {
@@ -185,7 +185,7 @@
       };
     }
   }
-  function nsTime(v){ var s=String(v||''); var m=s.match(/\/Date\((\-?[0-9]+)/); if(m) return Number(m[1]); var t=Date.parse(s); return isNaN(t)?0:t; } function nsSortKey(lbl){ var m={ 'Date':'date', 'Period':'period', 'Entry no.':'entryNumber', 'Journal':'journalCode', 'Description':'description', 'Account':'accountCode', 'Debit':'debit', 'Credit':'credit' }; return m[lbl]||''; } function nsSort(arr){ var k=nsSortKey(S.sort); if(!k) return arr; var c=arr.slice(); c.sort(function(x,y){ var a,b; if(k==='date'){ a=nsTime(x.date); b=nsTime(y.date); } else { a=x[k]; b=y[k]; } if(typeof a==='number'||typeof b==='number'){ return (Number(a||0)-Number(b||0))*S.dir; } a=String(a||'').toLowerCase(); b=String(b||'').toLowerCase(); return (a<b?-1:(a>b?1:0))*S.dir; }); return c; } function nsEntries(rows){ var o={}; rows.forEach(function(l){ o[keyOf(l)]=1; }); return Object.keys(o).length; } function nsSummary(rows){ var y={}; rows.forEach(function(l){ var k=String(l.year||''); if(!y[k]) y[k]={n:0,d:0,c:0}; y[k].n++; y[k].d+=Number(l.debit||0); y[k].c+=Number(l.credit||0); }); var ks=Object.keys(y).sort(); if(ks.length<2) return ''; var h=''; ks.forEach(function(k){ var v=y[k]; h+='<div class="sumcard"><b>' + esc(k) + '</b><span class="sml">' + v.n + ' lines</span><span class="sml">Debit ' + eur(v.d) + '</span><span class="sml">Credit ' + eur(v.c) + '</span><span class="snet">Net ' + eur(v.d - v.c) + '</span></div>'; }); return h; } function nsEnhance(w){ try { var t=w.querySelector('table'); if(!t) return; var rows=t.querySelectorAll('tbody tr.row'); var last=null; for(var i=0;i<rows.length;i++){ var e=rows[i].getAttribute('data-e'); var isNew=(e!==last); last=e; rows[i].className='row'+((i%2)?' alt':'')+((isNew&&i)?' grp':''); } var ths=t.querySelectorAll('thead th'); for(var s=0;s<ths.length;s++){ (function(th){ var lbl=(th.textContent||'').trim(); if(!nsSortKey(lbl)) return; th.className=(th.className?th.className+' ':'')+'sortable'+(S.sort===lbl?(S.dir>0?' ns-asc':' ns-dsc'):''); th.title='Sort by ' + lbl; th.onclick=function(){ if(S.sort===lbl){ S.dir=-S.dir; } else { S.sort=lbl; S.dir=1; } draw(); }; })(ths[s]); } } catch(err){} } function paintView(){ var a=el('vDet'), b=el('vSum'); if(a) a.className='vtab'+(S.view==='details'?' on':''); if(b) b.className='vtab'+(S.view==='summary'?' on':''); var x=el('expandAll'); if(x) x.textContent=(S.view==='summary'?'Expand all cost centres':'Expand all'); var qq=el('q'); if(qq) qq.placeholder=(S.view==='summary'?'Cost centre or G/L account':'Entry no., description, account'); } function nsGLCount(rows){ var o={}; rows.forEach(function(l){ o[nsGL(l)]=1; }); return Object.keys(o).length; } function nsCCCount(rows){ var o={}; rows.forEach(function(l){ o[nsCC(l)]=1; }); return Object.keys(o).length; } function nsSumFiltered(){ var q=(S.q||'').trim().toLowerCase(); if(!q) return S.srows; return S.srows.filter(function(l){ var hay=[l.costCenter,l.costCenterName,l.glCode,l.glDescription].join(' ').toLowerCase(); return hay.indexOf(q)>=0; }); } function drawSummary(){ var rows=nsSumFiltered(); var d=0,c=0; rows.forEach(function(l){ d+=Number(l.debit||0); c+=Number(l.credit||0); }); var k=el('kpis'); if(k){ k.innerHTML=[kpi('COST CENTRES', String(nsCCCount(rows)), (S.busy?'loading '+S.done+'/'+S.total:(nsGLCount(rows)+' G/L accounts, '+rows.length+' lines'))), kpi('TOTAL DEBIT', eur(S.gross ? S.gross.d : d), 'debit booked on the accrual account itself in Exact'), kpi('TOTAL CREDIT', eur(S.gross ? S.gross.c : c), 'credit booked on the accrual account itself in Exact'), kpi('NET (DEBIT - CREDIT)', eur(d-c), 'debit minus credit of the lines shown', 'var(--blue)', DASH_NOTE)].join(''); } var sw=el('sumWrap'); if(sw) sw.innerHTML=''; var w=el('wrap'); if(!w) return; if(!rows.length){ w.innerHTML='<div class="state">'+(S.busy?'Loading the summary from Exact Online ('+S.done+'/'+S.total+') - every journal entry is opened, so this takes longer':(!S.entity?'Choose an entity, financial year and G/L account, then press Apply':'No data for this selection'))+'</div>'; note(); return; } w.innerHTML=nsSumHtml(rows); var pcs=w.querySelectorAll('tr.pcc'); for(var i2=0;i2<pcs.length;i2++){ pcs[i2].onclick=function(){ var ck=this.getAttribute('data-cc'); if(S.sumOpen[ck]){ delete S.sumOpen[ck]; } else { S.sumOpen[ck]=1; } draw(); }; } note(); } function nsCC(l){ var c=String(l.costCenter||'').trim(); var n=String(l.costCenterName||'').trim(); if(!c&&!n) return NO_CC_LABEL; return c?(c+(n?' - '+n:'')):n; } function nsGL(l){ var c=String(l.glCode||'').trim(); var n=String(l.glDescription||'').trim(); if(!c&&!n) return NO_GL_LABEL; return c?(c+(n?' - '+n:'')):n; } function nsPerKey(l){ var y=Number(l.year||0); var p=Number(l.period||0); return y*100+p; } function nsPerLbl(k){ var y=Math.floor(k/100); var p=k%100; return (p<10?'0'+p:''+p)+'. '+y; } function nsAmt(v){ v=Number(v||0); if(Math.abs(v)<0.005) return '<span class="z">-</span>'; return '<span class="'+(v<0?'neg':'pos')+'">'+eur(v)+'</span>'; } function nsPivot(rows){ var cols={}, tree={}; rows.forEach(function(l){ var pk=nsPerKey(l); cols[pk]=1; var cc=nsCC(l), ac=nsGL(l); if(!tree[cc]) tree[cc]={t:0,n:0,per:{},ch:{}}; var g=tree[cc]; if(!g.ch[ac]) g.ch[ac]={t:0,n:0,per:{}}; var v=Number(l.debit||0)-Number(l.credit||0); g.t+=v; g.n++; g.per[pk]=(g.per[pk]||0)+v; g.ch[ac].t+=v; g.ch[ac].n++; g.ch[ac].per[pk]=(g.ch[ac].per[pk]||0)+v; }); var ck=Object.keys(cols).map(Number).sort(function(a,b){return a-b;}); return {ck:ck, tree:tree}; } function nsSumHtml(rows){ var p=nsPivot(rows); var ck=p.ck; var names=Object.keys(p.tree).sort(); if(!names.length) return '<div class="state">No data for this selection</div>'; var sep={}, py=0; ck.forEach(function(k){ var yy=Math.floor(k/100); if(py&&yy!==py) sep[k]=' ys'; py=yy; }); var h='<table class="pivot"><thead><tr><th class="c1">Cost centre / G/L account</th>'; ck.forEach(function(k){ h+='<th class="num'+(sep[k]||'')+'">'+esc(nsPerLbl(k))+'</th>'; }); h+='<th class="num gt">Grand Total</th></tr></thead><tbody>'; var tot={}, gt=0; names.forEach(function(cc){ var g=p.tree[cc]; var open=!!S.sumOpen[cc]; h+='<tr class="pcc" data-cc="'+esc(cc)+'"><td class="c1" title="'+esc(cc)+'">'+(open?'\u25be':'\u25b8')+' '+esc(cc)+rowInfo(cc)+' <span class="sml">('+g.n+' lines)</span></td>'; ck.forEach(function(k){ var v=g.per[k]||0; tot[k]=(tot[k]||0)+v; h+='<td class="num'+(sep[k]||'')+'">'+nsAmt(v)+'</td>'; }); gt+=g.t; h+='<td class="num gt">'+nsAmt(g.t)+'</td></tr>'; if(open){ Object.keys(g.ch).sort().forEach(function(ac){ var c=g.ch[ac]; h+='<tr class="pac"><td class="c1" title="'+esc(ac)+'">'+esc(ac)+rowInfo(ac)+' <span class="sml">('+c.n+')</span></td>'; ck.forEach(function(k){ h+='<td class="num'+(sep[k]||'')+'">'+nsAmt(c.per[k]||0)+'</td>'; }); h+='<td class="num gt">'+nsAmt(c.t)+'</td></tr>'; }); } }); h+='</tbody><tfoot><tr><td class="c1">Grand Total &middot; '+names.length+' cost centres</td>'; ck.forEach(function(k){ h+='<td class="num'+(sep[k]||'')+'">'+nsAmt(tot[k]||0)+'</td>'; }); h+='<td class="num gt">'+nsAmt(gt)+'</td></tr></tfoot></table>'; return h; } function shortName(n) {
+  function nsTime(v){ var s=String(v||''); var m=s.match(/\/Date\((\-?[0-9]+)/); if(m) return Number(m[1]); var t=Date.parse(s); return isNaN(t)?0:t; } function nsSortKey(lbl){ var m={ 'Date':'date', 'Period':'period', 'Entry no.':'entryNumber', 'Journal':'journalCode', 'Description':'description', 'Account':'accountCode', 'Debit':'debit', 'Credit':'credit' }; return m[lbl]||''; } function nsSort(arr){ var k=nsSortKey(S.sort); if(!k) return arr; var c=arr.slice(); c.sort(function(x,y){ var a,b; if(k==='date'){ a=nsTime(x.date); b=nsTime(y.date); } else { a=x[k]; b=y[k]; } if(typeof a==='number'||typeof b==='number'){ return (Number(a||0)-Number(b||0))*S.dir; } a=String(a||'').toLowerCase(); b=String(b||'').toLowerCase(); return (a<b?-1:(a>b?1:0))*S.dir; }); return c; } function nsEntries(rows){ var o={}; rows.forEach(function(l){ o[keyOf(l)]=1; }); return Object.keys(o).length; } function nsSummary(rows){ var y={}; rows.forEach(function(l){ var k=String(l.year||''); if(!y[k]) y[k]={n:0,d:0,c:0}; y[k].n++; y[k].d+=Number(l.debit||0); y[k].c+=Number(l.credit||0); }); var ks=Object.keys(y).sort(); if(ks.length<2) return ''; var h=''; ks.forEach(function(k){ var v=y[k]; h+='<div class="sumcard"><b>' + esc(k) + '</b><span class="sml">' + v.n + ' lines</span><span class="sml">Debit ' + eur(v.d) + '</span><span class="sml">Credit ' + eur(v.c) + '</span><span class="snet">Net ' + eur(v.d - v.c) + '</span></div>'; }); return h; } function nsEnhance(w){ try { var t=w.querySelector('table'); if(!t) return; var rows=t.querySelectorAll('tbody tr.row'); var last=null; for(var i=0;i<rows.length;i++){ var e=rows[i].getAttribute('data-e'); var isNew=(e!==last); last=e; rows[i].className='row'+((i%2)?' alt':'')+((isNew&&i)?' grp':''); } var ths=t.querySelectorAll('thead th'); for(var s=0;s<ths.length;s++){ (function(th){ var lbl=(th.textContent||'').trim(); if(!nsSortKey(lbl)) return; th.className=(th.className?th.className+' ':'')+'sortable'+(S.sort===lbl?(S.dir>0?' ns-asc':' ns-dsc'):''); th.title='Sort by ' + lbl; th.onclick=function(){ if(S.sort===lbl){ S.dir=-S.dir; } else { S.sort=lbl; S.dir=1; } draw(); }; })(ths[s]); } } catch(err){} } function paintView(){ var a=el('vDet'), b=el('vSum'), c1=el('vSum1'); var isS1=(S.view==='summary1'); if(a) a.className='vtab'+(S.view==='details'?' on':''); if(b) b.className='vtab'+(S.view==='summary'?' on':''); if(c1) c1.className='vtab'+(isS1?' on':''); var x=el('expandAll'); if(x) x.textContent=(S.view==='summary'?'Expand all cost centres':'Expand all'); var qq=el('q'); if(qq) qq.placeholder=(S.view==='summary'?'Cost centre or G/L account':'Entry no., description, account'); var kp=el('kpis'), sw=el('sumWrap'), w=el('wrap'), s1=el('sum1Wrap'), ctl=document.querySelector('.controls'); if(s1) s1.style.display=isS1?'':'none'; if(kp) kp.style.display=isS1?'none':''; if(sw) sw.style.display=isS1?'none':''; if(w) w.style.display=isS1?'none':''; if(ctl) ctl.style.display=isS1?'none':''; var hh=document.querySelector('h1'); if(hh) hh.textContent=isS1?'Summary 1':'Accrued'; var sb=el('asof'); if(sb&&isS1) sb.textContent='Accrual amortisation of the merged accrual accounts for every entity, 2024 - 2026 - live data from Exact Online'; } function nsGLCount(rows){ var o={}; rows.forEach(function(l){ o[nsGL(l)]=1; }); return Object.keys(o).length; } function nsCCCount(rows){ var o={}; rows.forEach(function(l){ o[nsCC(l)]=1; }); return Object.keys(o).length; } function nsSumFiltered(){ var q=(S.q||'').trim().toLowerCase(); if(!q) return S.srows; return S.srows.filter(function(l){ var hay=[l.costCenter,l.costCenterName,l.glCode,l.glDescription].join(' ').toLowerCase(); return hay.indexOf(q)>=0; }); } function drawSummary(){ var rows=nsSumFiltered(); var d=0,c=0; rows.forEach(function(l){ d+=Number(l.debit||0); c+=Number(l.credit||0); }); var k=el('kpis'); if(k){ k.innerHTML=[kpi('COST CENTRES', String(nsCCCount(rows)), (S.busy?'loading '+S.done+'/'+S.total:(nsGLCount(rows)+' G/L accounts, '+rows.length+' lines'))), kpi('TOTAL DEBIT', eur(S.gross ? S.gross.d : d), 'debit booked on the accrual account itself in Exact'), kpi('TOTAL CREDIT', eur(S.gross ? S.gross.c : c), 'credit booked on the accrual account itself in Exact'), kpi('NET (DEBIT - CREDIT)', eur(d-c), 'debit minus credit of the lines shown', 'var(--blue)', DASH_NOTE)].join(''); } var sw=el('sumWrap'); if(sw) sw.innerHTML=''; var w=el('wrap'); if(!w) return; if(!rows.length){ w.innerHTML='<div class="state">'+(S.busy?'Loading the summary from Exact Online ('+S.done+'/'+S.total+') - every journal entry is opened, so this takes longer':(!S.entity?'Choose an entity, financial year and G/L account, then press Apply':'No data for this selection'))+'</div>'; note(); return; } w.innerHTML=nsSumHtml(rows); var pcs=w.querySelectorAll('tr.pcc'); for(var i2=0;i2<pcs.length;i2++){ pcs[i2].onclick=function(){ var ck=this.getAttribute('data-cc'); if(S.sumOpen[ck]){ delete S.sumOpen[ck]; } else { S.sumOpen[ck]=1; } draw(); }; } note(); } function nsCC(l){ var c=String(l.costCenter||'').trim(); var n=String(l.costCenterName||'').trim(); if(!c&&!n) return NO_CC_LABEL; return c?(c+(n?' - '+n:'')):n; } function nsGL(l){ var c=String(l.glCode||'').trim(); var n=String(l.glDescription||'').trim(); if(!c&&!n) return NO_GL_LABEL; return c?(c+(n?' - '+n:'')):n; } function nsPerKey(l){ var y=Number(l.year||0); var p=Number(l.period||0); return y*100+p; } function nsPerLbl(k){ var y=Math.floor(k/100); var p=k%100; return (p<10?'0'+p:''+p)+'. '+y; } function nsAmt(v){ v=Number(v||0); if(Math.abs(v)<0.005) return '<span class="z">-</span>'; return '<span class="'+(v<0?'neg':'pos')+'">'+eur(v)+'</span>'; } function nsPivot(rows){ var cols={}, tree={}; rows.forEach(function(l){ var pk=nsPerKey(l); cols[pk]=1; var cc=nsCC(l), ac=nsGL(l); if(!tree[cc]) tree[cc]={t:0,n:0,per:{},ch:{}}; var g=tree[cc]; if(!g.ch[ac]) g.ch[ac]={t:0,n:0,per:{}}; var v=Number(l.debit||0)-Number(l.credit||0); g.t+=v; g.n++; g.per[pk]=(g.per[pk]||0)+v; g.ch[ac].t+=v; g.ch[ac].n++; g.ch[ac].per[pk]=(g.ch[ac].per[pk]||0)+v; }); var ck=Object.keys(cols).map(Number).sort(function(a,b){return a-b;}); return {ck:ck, tree:tree}; } function nsSumHtml(rows){ var p=nsPivot(rows); var ck=p.ck; var names=Object.keys(p.tree).sort(); if(!names.length) return '<div class="state">No data for this selection</div>'; var sep={}, py=0; ck.forEach(function(k){ var yy=Math.floor(k/100); if(py&&yy!==py) sep[k]=' ys'; py=yy; }); var h='<table class="pivot"><thead><tr><th class="c1">Cost centre / G/L account</th>'; ck.forEach(function(k){ h+='<th class="num'+(sep[k]||'')+'">'+esc(nsPerLbl(k))+'</th>'; }); h+='<th class="num gt">Grand Total</th></tr></thead><tbody>'; var tot={}, gt=0; names.forEach(function(cc){ var g=p.tree[cc]; var open=!!S.sumOpen[cc]; h+='<tr class="pcc" data-cc="'+esc(cc)+'"><td class="c1" title="'+esc(cc)+'">'+(open?'\u25be':'\u25b8')+' '+esc(cc)+rowInfo(cc)+' <span class="sml">('+g.n+' lines)</span></td>'; ck.forEach(function(k){ var v=g.per[k]||0; tot[k]=(tot[k]||0)+v; h+='<td class="num'+(sep[k]||'')+'">'+nsAmt(v)+'</td>'; }); gt+=g.t; h+='<td class="num gt">'+nsAmt(g.t)+'</td></tr>'; if(open){ Object.keys(g.ch).sort().forEach(function(ac){ var c=g.ch[ac]; h+='<tr class="pac"><td class="c1" title="'+esc(ac)+'">'+esc(ac)+rowInfo(ac)+' <span class="sml">('+c.n+')</span></td>'; ck.forEach(function(k){ h+='<td class="num'+(sep[k]||'')+'">'+nsAmt(c.per[k]||0)+'</td>'; }); h+='<td class="num gt">'+nsAmt(c.t)+'</td></tr>'; }); } }); h+='</tbody><tfoot><tr><td class="c1">Grand Total &middot; '+names.length+' cost centres</td>'; ck.forEach(function(k){ h+='<td class="num'+(sep[k]||'')+'">'+nsAmt(tot[k]||0)+'</td>'; }); h+='<td class="num gt">'+nsAmt(gt)+'</td></tr></tfoot></table>'; return h; } function shortName(n) {
     var s = String(n || '');
     s = s.replace(/ GmbH| B\.V\.| S\.L\.| S\.r\.l\.| SRL| ApS| AS| SE| Ltd| Limited| s\.r\.o\.| S\.A\.S\.|, unipessoal Lda|, UNIPESSOAL, LDA\.|LDA\./g, '');
     return s.trim();
@@ -316,7 +316,8 @@
 
   function keyOf(l) { return l.division + '-' + l.entryNumber; }
 
-  function draw() { if (S.view === 'summary') { drawSummary(); return; }
+  function draw() { if (S.view === 'summary1') { drawSum1(); return; }
+    if (S.view === 'summary') { drawSummary(); return; }
     var rows = filtered();
     var d = 0, c = 0, ents = {};
     rows.forEach(function (l) { d += l.debit; c += l.credit; ents[l.entityCode] = 1; });
@@ -495,10 +496,137 @@
     }
   }
 
+  // ===== Summary 1: the accrual amortisation of every entity, month by month =====
+  // The very same engine as the PrePaid summary, only it reads the merged accrual
+  // accounts and stops at 2026. Debit stands first, Credit second, Net last.
+  var SUM1 = { busy: false, rows: null, progress: 0, loaded: false };
+  var S1_YEARS = [2024, 2025, 2026];
+  var S1_MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  function s1MonthIndex(y, m) { return y * 12 + (m - 1); }
+  function s1Wait(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
+  function s1ParseDMY(v) {
+    if (!v) { return null; }
+    var p = String(v).split('-');
+    if (p.length < 3) { return null; }
+    var d = parseInt(p[0], 10), mo = parseInt(p[1], 10), y = parseInt(p[2], 10);
+    if (!y || !mo) { return null; }
+    return { y: y, m: mo, d: d || 1 };
+  }
+  function s1Style() {
+    if (document.getElementById('sum1Style')) { return; }
+    var st = document.createElement('style');
+    st.id = 'sum1Style';
+    st.textContent = '#sum1Wrap .s1box{overflow:auto;border:1px solid var(--line);border-radius:10px;background:#ffffff;max-height:70vh}'
+      + '#sum1Wrap table.s1{width:auto;min-width:100%;border-collapse:collapse;font-size:12px}'
+      + '#sum1Wrap table.s1 th,#sum1Wrap table.s1 td{border-bottom:1px solid var(--line);border-right:1px solid var(--line);padding:5px 8px;white-space:nowrap}'
+      + '#sum1Wrap table.s1 th{background:#eef2fb;font-weight:700;position:sticky;top:0;z-index:2}'
+      + '#sum1Wrap table.s1 th.yr{text-align:center;background:#e3ebfa}'
+      + '#sum1Wrap table.s1 td.r,#sum1Wrap table.s1 th.r{text-align:right}'
+      + '#sum1Wrap tr.ename td{background:#f6f8fd;font-weight:700}'
+      + '#sum1Wrap td.lbl{padding-left:18px;color:#4b5563}'
+      + '#sum1Wrap tr.nrow td{font-weight:700;background:#fbfcfe}';
+    document.head.appendChild(st);
+  }
+  async function loadSum1() {
+    if (SUM1.busy) { return; }
+    SUM1.busy = true; SUM1.rows = []; SUM1.progress = 0;
+    drawSum1();
+    async function fetchOne(dv) {
+      var url = '/api/accrued/schedule?division=' + encodeURIComponent(dv) + '&journal=all&mode=period&until=year';
+      var r = await fetch(url, { credentials: 'same-origin' });
+      var j = {}; try { j = await r.json(); } catch (_) {}
+      return { ok: r.ok, j: j };
+    }
+    var slots = new Array(ENT.length);
+    var nextEnt = 0;
+    async function one(i) {
+      var e = ENT[i], dv = e[2];
+      var row = { code: e[1], name: e[3], months: {}, total: 0 };
+      try {
+        var res = await fetchOne(dv);
+        if (!res.ok || !res.j || !res.j.rows) { await s1Wait(900); res = await fetchOne(dv); }
+        if (res.ok && res.j && res.j.rows) {
+          res.j.rows.forEach(function (r0) {
+            var st = s1ParseDMY(r0.start), en = s1ParseDMY(r0.end);
+            var monthly = Number(r0.monthly) || 0;
+            if (!st || !en || !monthly) { return; }
+            var a = s1MonthIndex(st.y, st.m), b = s1MonthIndex(en.y, en.m);
+            for (var mi = a; mi <= b; mi++) {
+              var yy = Math.floor(mi / 12), mm = (mi % 12) + 1;
+              if (yy < 2024 || yy > 2026) { continue; }
+              var key = yy + '-' + mm;
+              if (!row.months[key]) { row.months[key] = { debit: 0, credit: 0 }; }
+              row.months[key].debit += monthly;
+              row.months[key].credit += monthly;
+            }
+            row.total += Number(r0.total) || 0;
+          });
+        }
+      } catch (err) {}
+      slots[i] = row;
+      SUM1.progress = SUM1.progress + 1;
+      SUM1.rows = slots.filter(function (x) { return !!x; });
+      drawSum1();
+    }
+    async function lane() {
+      for (;;) { var i = nextEnt++; if (i >= ENT.length) { return; } await one(i); }
+    }
+    var runners = [];
+    for (var w = 0; w < 5 && w < ENT.length; w++) { runners.push(lane()); }
+    await Promise.all(runners);
+    SUM1.rows = slots.filter(function (x) { return !!x; });
+    SUM1.busy = false; SUM1.loaded = true;
+    drawSum1();
+  }
+  function drawSum1() {
+    s1Style();
+    var w = el('sum1Wrap');
+    if (!w) { return; }
+    if (!SUM1.rows) { w.innerHTML = '<div class="state">Loading Summary 1...</div>'; return; }
+    var banner = '';
+    if (SUM1.busy) { banner = '<div class="state" style="padding:12px 16px">Reading the accrual amortisation out of Exact Online... ' + (SUM1.progress || 0) + ' of ' + ENT.length + ' entities loaded.</div>'; }
+    if (SUM1.busy && (!SUM1.rows || !SUM1.rows.length)) { w.innerHTML = banner; return; }
+    var NCOL = S1_YEARS.length * 12;
+    var h1 = '<th rowspan="2">Entity</th>';
+    S1_YEARS.forEach(function (y) { h1 += '<th class="yr" colspan="12">' + y + '</th>'; });
+    h1 += '<th class="r" rowspan="2">Total</th>';
+    var h2 = '';
+    S1_YEARS.forEach(function () { S1_MONTHS.forEach(function (mn) { h2 += '<th class="r">' + mn + '</th>'; }); });
+    var head = '<thead><tr>' + h1 + '</tr><tr>' + h2 + '</tr></thead>';
+    function fmt(n) { n = Number(n) || 0; if (Math.round(n * 100) === 0) { return ''; } return eur(n); }
+    var body = '';
+    SUM1.rows.forEach(function (er) {
+      var totalAll = er.total, cumCredit = 0;
+      var deb = '', cre = '', net = '';
+      S1_YEARS.forEach(function (y) {
+        for (var m = 1; m <= 12; m++) {
+          var cell = er.months[y + '-' + m] || { debit: 0, credit: 0 };
+          cumCredit += cell.credit;
+          deb += '<td class="r">' + fmt(cell.debit) + '</td>';
+          cre += '<td class="r">' + fmt(cell.credit) + '</td>';
+          net += '<td class="r">' + fmt(totalAll - cumCredit) + '</td>';
+        }
+      });
+      var empty = '';
+      for (var q = 0; q < NCOL; q++) { empty += '<td></td>'; }
+      body += '<tr class="ename"><td>' + esc(er.code + ' - ' + er.name) + '</td>' + empty + '<td></td></tr>';
+      body += '<tr class="drow"><td class="lbl">Debit</td>' + deb + '<td class="r"></td></tr>';
+      body += '<tr class="crow"><td class="lbl">Credit</td>' + cre + '<td class="r"></td></tr>';
+      body += '<tr class="nrow"><td class="lbl">Net</td>' + net + '<td class="r"><b>' + eur(totalAll - cumCredit) + '</b></td></tr>';
+    });
+    w.innerHTML = banner + '<div class="s1box"><table class="s1">' + head + '<tbody>' + body + '</tbody></table></div>';
+  }
+
   shell();
   loadAccounts();
   conn();
   setStatus('');
   run();
   setInterval(conn, 300000);
+  // Every two hours the dashboard reads itself again.
+  setInterval(function () {
+    conn();
+    if (S.view === 'summary1') { SUM1.loaded = false; SUM1.busy = false; loadSum1(); }
+    else { S.fresh = true; run(); }
+  }, 7200000);
 })();
