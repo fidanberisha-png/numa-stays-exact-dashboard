@@ -572,7 +572,7 @@
       for (;;) { var i = nextEnt++; if (i >= ENT.length) { return; } await one(i); }
     }
     var runners = [];
-    for (var w = 0; w < 5 && w < ENT.length; w++) { runners.push(lane()); }
+    for (var w = 0; w < 20 && w < ENT.length; w++) { runners.push(lane()); }
     await Promise.all(runners);
     SUM1.rows = slots.filter(function (x) { return !!x; });
     SUM1.busy = false; SUM1.loaded = true;
