@@ -159,6 +159,15 @@
     // fraction of the old time. The rows keep the order of ENT.
     var slots = new Array(ENT.length);
     var nextEnt = 0;
+    // The status block under the report says which entities are already on the
+    // screen and which ones are still being read.
+    function sumInfo() {
+      if (!window.NUMA_INFO) { return; }
+      var inn = [], out = [];
+      for (var k = 0; k < ENT.length; k++) { (slots[k] ? inn : out).push(ENT[k][1]); }
+      window.NUMA_INFO.set({ loaded: inn, pending: out });
+    }
+    sumInfo();
     async function oneEntity(i) {
       var e = ENT[i]; var dv = e[2];
       var entRow = { code: e[1], name: e[3], months: {}, total: 0 };
@@ -186,6 +195,7 @@
       slots[i] = entRow;
       SUM.progress = (SUM.progress || 0) + 1;
       SUM.rows = slots.filter(function (r) { return !!r; });
+      sumInfo();
       drawSummary();
     }
     async function sumLane() {
@@ -200,6 +210,7 @@
     await Promise.all(sumRunners);
     SUM.rows = slots.filter(function (r) { return !!r; });
     SUM.busy = false; SUM.loaded = true;
+    sumInfo();
     drawSummary();
   }
 
