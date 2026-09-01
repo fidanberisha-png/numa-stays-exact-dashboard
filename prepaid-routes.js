@@ -131,7 +131,12 @@ module.exports = function (getToken) {
     // Exact allows only about sixty calls a minute per company. Reading a large
     // entity therefore has to wait its turn, and a refusal is retried with a
     // short backoff instead of turning into an error on the screen.
-    const CALL_LOG = {};
+    // All the dashboards of this server share the one budget Exact Online counts
+    // per division: about sixty calls a minute. The queue therefore lives on the
+    // process instead of in this file, otherwise the accrued, prepaid and ageing
+    // reports would each spend sixty calls of the very same minute and Exact
+    // would refuse them all.
+    const CALL_LOG = (global.__numaRate = global.__numaRate || {});
     const MAX_PER_MIN = 55;
     function sleep(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
     function divOf(u) { const m = /\/api\/v1\/(\d+)\//.exec(String(u || '')); return m ? m[1] : 'x'; }
