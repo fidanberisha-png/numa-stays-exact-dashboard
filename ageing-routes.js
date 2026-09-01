@@ -97,8 +97,13 @@ module.exports = function (getToken) {
   // queued, a 429 is retried with a short backoff, every finished list is kept
   // for a few minutes and, if Exact still refuses, the rows already collected
   // (or the last known list) are used instead of showing an empty screen.
-  const CALL_LOG = {};
-  const MAX_PER_MIN = 58;
+  // All the dashboards of this server share the one budget Exact Online counts
+  // per division: about sixty calls a minute. The queue therefore lives on the
+  // process instead of in this file, otherwise the ageing, accrued and prepaid
+  // reports would each spend sixty calls of the very same minute and Exact
+  // would refuse them all.
+  const CALL_LOG = (global.__numaRate = global.__numaRate || {});
+  const MAX_PER_MIN = 55;
   const ROWS_TTL_MS = 10 * 60 * 1000;
   // A list that is older than the fresh window is still handed over at once and
   // renewed in the background, so a screen never waits for a full read twice.
@@ -109,23 +114,27 @@ module.exports = function (getToken) {
   // as well. Nineteen entities are then read next to each other instead of
   // sharing one single budget of 58 calls a minute.
   function divOf(u) { const m = /\/api\/v1\/(\d+)\//.exec(String(u || '')); return m ? m[1] : 'x'; }
-  async function slot(u) {
+  async function slot(u, soft) {
     const k = divOf(u);
     if (!CALL_LOG[k]) { CALL_LOG[k] = []; }
     const log = CALL_LOG[k];
     for (let i = 0; i < 20; i++) {
       const now = Date.now();
       while (log.length && (now - log[0]) > 60000) { log.shift(); }
-      if (log.length < MAX_PER_MIN) { log.push(now); return; }
+      // Work that only fills the picture in, like looking up the payable G/L
+      // account of an open item, may use no more than a third of the minute, so
+      // a report on the screen is never left waiting behind it.
+      const cap = soft ? Math.ceil(MAX_PER_MIN / 3) : MAX_PER_MIN;
+      if (log.length < cap) { log.push(now); return; }
       await sleep(1000);
     }
     log.push(Date.now());
   }
-  async function getEx(url, h) {
+  async function getEx(url, h, soft) {
     let wait = 1200;
     let last = null;
     for (let i = 0; i < 4; i++) {
-      await slot(url);
+      await slot(url, soft);
       // A long read is allowed to take minutes, and the access token of Exact
       // Online lives only ten. The header is therefore taken again for every
       // single call, and a refusal because of an expired token is retried.
@@ -418,7 +427,7 @@ module.exports = function (getToken) {
   // entry number. For an item that did not come from a purchase journal the
   // journal entry is read and the line that sits on a payable account of this
   // entity is taken, which is the account Exact really books the item on.
-  const ENTRY_CHUNK = 40;
+  const ENTRY_CHUNK = 100;
   const ENTRY_MAX = 8000;
   const entryRunning = {};
   function yearOfRow(row) {
@@ -430,7 +439,7 @@ module.exports = function (getToken) {
     let rows = [];
     let pages = 0;
     while (url && pages < 20) {
-      const r = await getEx(url, function () { return headers() || h; });
+      const r = await getEx(url, function () { return headers() || h; }, true);
       const d = r.data && r.data.d ? r.data.d : r.data;
       const part = d && d.results ? d.results : (Array.isArray(d) ? d : []);
       rows = rows.concat(part);
