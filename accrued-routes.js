@@ -20,8 +20,10 @@ module.exports = function (getToken) {
     // budget is gone. Waiting for a free slot before asking is friendlier than being
     // refused and retrying, so a division never spends more than BUDGET requests in
     // any rolling minute and a busy entity simply takes a little longer.
-    const RATE = {};
-    const BUDGET = 57;
+    // All the dashboards of this server share the one budget Exact Online counts
+    // per division, so the queue lives on the process instead of in this file.
+    const RATE = (global.__numaRate = global.__numaRate || {});
+    const BUDGET = 55;
     async function slot(division) {
         for (let guard = 0; guard < 200; guard++) {
             if (!RATE[division]) RATE[division] = [];
