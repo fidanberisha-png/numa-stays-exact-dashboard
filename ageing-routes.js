@@ -261,10 +261,26 @@ module.exports = function (getToken) {
     for (let i = 0; i < allow.length; i++) { if (d === norm(allow[i])) return true; }
     return false;
   }
-  function accumulate(map, rows, referTo, refDate, currency, rates, edges, allow, stats, division) {
+  function accumulate(map, rows, referTo, refDate, currency, rates, edges, allow, stats, division, gi, glStats) {
     const nb = edges.length + 1;
     rows.forEach(function (row) {
-      if (!glWanted(row, allow)) { if (stats) stats.skipped = stats.skipped + 1; return; }
+    let ga = null;
+    if (gi) {
+      ga = glOfRow(row, gi);
+      const gdesc = ga && ga.description ? ga.description : 'Not linked to a payable G/L account';
+      const gcode = ga && ga.code ? ga.code : '';
+      if (glStats) {
+        const gk = norm(gdesc);
+        if (!glStats[gk]) { glStats[gk] = { description: gdesc, codes: [], count: 0 }; }
+        if (gcode && glStats[gk].codes.indexOf(gcode) < 0) { glStats[gk].codes.push(gcode); }
+        glStats[gk].count = glStats[gk].count + 1;
+      }
+      if (allow && allow.length) {
+        let okg = false;
+        for (let z = 0; z < allow.length; z++) { if (norm(allow[z]) === norm(gdesc)) { okg = true; break; } }
+        if (!okg) { if (stats) { stats.skipped = stats.skipped + 1; } return; }
+      }
+    } else if (!glWanted(row, allow)) { if (stats) { stats.skipped = stats.skipped + 1; } return; }
       const code = (row.AccountCode === undefined || row.AccountCode === null ? '' : String(row.AccountCode)).trim();
       const baseKey = code || String(row.AccountId || 'unknown');
       const key = (division !== undefined && division !== null && String(division) !== '') ? (String(division) + '|' + baseKey) : baseKey;
@@ -338,6 +354,57 @@ module.exports = function (getToken) {
     }
     return { rows: rows, source: source, loading: loading };
   }
+  // ---- The payable G/L accounts of an entity ------------------------------
+  // Exact Online does not put the G/L account on the open item itself. What it
+  // does give is the journal of the item, and every purchase journal is linked
+  // to exactly one payable G/L account. That link is used here, so an item is
+  // counted under the same payable account Exact books it on. An item that
+  // comes from a journal without such a link (a bank or a general journal)
+  // falls back to the payable account of the purchase journals that are used
+  // the most, which is the default creditor account of the entity.
+  const AP_GL_TYPE = 22;
+  const GL_TTL_MS = 6 * 60 * 60 * 1000;
+  const glInfoCache = {};
+  async function apGlInfo(division, h) {
+    const hit = glInfoCache[division];
+    if (hit && (Date.now() - hit.at) < GL_TTL_MS) { return hit; }
+    const info = { at: Date.now(), accounts: [], byJournal: {}, fallback: null };
+    try {
+      const accs = await fetchAll(division, 'financial/GLAccounts?$select=Code,Description,Type&$filter=Type eq ' + AP_GL_TYPE, h, 10, 25000);
+      accs.forEach(function (a) {
+        const code = String(a.Code === undefined || a.Code === null ? '' : a.Code).trim();
+        const desc = String(a.Description || '').trim();
+        if (code || desc) { info.accounts.push({ code: code, description: desc || ('G/L ' + code) }); }
+      });
+    } catch (e) { /* the picker simply stays empty for this entity */ }
+    try {
+      const js = await fetchAll(division, 'financial/Journals?$select=Code,Description,GLAccountCode,GLAccountDescription&$filter=Type eq ' + AP_GL_TYPE, h, 10, 25000);
+      const used = {};
+      js.forEach(function (j) {
+        const jc = String(j.Code === undefined || j.Code === null ? '' : j.Code).trim();
+        const gc = String(j.GLAccountCode === undefined || j.GLAccountCode === null ? '' : j.GLAccountCode).trim();
+        const gd = String(j.GLAccountDescription || '').trim();
+        if (!jc || (!gc && !gd)) { return; }
+        info.byJournal[jc] = { code: gc, description: gd || ('G/L ' + gc) };
+        used[gc] = (used[gc] || 0) + 1;
+      });
+      let best = null;
+      Object.keys(used).forEach(function (c) { if (!best || used[c] > used[best]) { best = c; } });
+      if (best !== null) {
+        Object.keys(info.byJournal).forEach(function (jc) { if (!info.fallback && info.byJournal[jc].code === best) { info.fallback = info.byJournal[jc]; } });
+      }
+    } catch (e) { /* without journals every item lands on the fallback */ }
+    glInfoCache[division] = info;
+    return info;
+  }
+  function glOfRow(row, info) {
+    if (!info) { return null; }
+    const jc = String(row.JournalCode === undefined || row.JournalCode === null ? '' : row.JournalCode).trim();
+    if (jc && info.byJournal[jc]) { return info.byJournal[jc]; }
+    const desc = glText(row);
+    if (desc) { return { code: glCode(row) || '', description: desc }; }
+    return info.fallback;
+  }
   router.get('/api/divisions', async function (req, res) {
     const h = headers();
     if (!h) return res.status(401).json({ error: 'Not authenticated' });
@@ -365,7 +432,12 @@ module.exports = function (getToken) {
   async function handleAgeing(req, res, cfg) {
     const sources = cfg.sources;
     const edges = cfg.edges;
-    const allow = cfg.gl || [];
+  // Which payable G/L accounts are wanted. Nothing chosen means every account,
+  // just like the ageing screen of Exact Online when its G/L list is left empty.
+  // The choice is made on the DESCRIPTION of the account, because the same
+  // account carries a different number in every entity.
+  const glParam = (req.query.gl === undefined || req.query.gl === null) ? String() : String(req.query.gl);
+  const allowList = (glParam === '' || glParam.toLowerCase() === 'all') ? [] : glParam.split('|').map(function (x) { return x.trim(); }).filter(function (x) { return x !== ''; });
     const h = headers();
     if (!h) return res.status(401).json({ error: 'Not authenticated' });
     const referTo = req.query.referTo === 'duedate' ? 'duedate' : 'date';
@@ -376,7 +448,7 @@ module.exports = function (getToken) {
     const buckets = bucketLabels(edges);
     const totals = { total: 0 };
     buckets.forEach(function (b) { totals[b.key] = 0; });
-    const out = { referTo: referTo, referenceDate: iso(refDate), division: null, consolidated: consolidated, currency: 'EUR', source: null, buckets: buckets, glAccounts: allow, accounts: [], totals: totals, itemCount: 0, skippedRows: 0, ratesFrom: (ratesCache && ratesCache.fallback ? 'fallback' : 'frankfurter.dev'), errors: {}, lastUpdated: new Date().toISOString() };
+    const out = { referTo: referTo, referenceDate: iso(refDate), division: null, consolidated: consolidated, currency: 'EUR', source: null, buckets: buckets, glAccounts: allowList, glSelected: allowList, glOptions: [], glUsed: [], accounts: [], totals: totals, itemCount: 0, skippedRows: 0, ratesFrom: (ratesCache && ratesCache.fallback ? 'fallback' : 'frankfurter.dev'), errors: {}, lastUpdated: new Date().toISOString() };
     let targets = [];
     try {
       if (consolidated) { const all = await getAllDivisions(h); targets = all.map(function (d) { return d.code; }); }
@@ -388,6 +460,8 @@ module.exports = function (getToken) {
     }
     out.division = consolidated ? 'consolidated' : targets[0];
     const map = {}; let totalRows = 0; let gotAny = false;
+  const glStats = {};
+  const glOptMap = {};
     const stats = { skipped: 0 };
     // The whole answer gets about 40 seconds; whatever is not read by then keeps
     // reading in the background and the dashboard asks again a few seconds later.
@@ -395,19 +469,29 @@ module.exports = function (getToken) {
     let waiting = null;
     for (let i = 0; i < targets.length; i++) {
       const cur = await divisionCurrency(targets[i], h);
+    const gi = cfg.withGl ? await apGlInfo(targets[i], h) : null;
+    if (gi) {
+      gi.accounts.forEach(function (a) {
+        const k = norm(a.description);
+        if (!glOptMap[k]) { glOptMap[k] = { description: a.description, codes: [] }; }
+        if (a.code && glOptMap[k].codes.indexOf(a.code) < 0) { glOptMap[k].codes.push(a.code); }
+      });
+    }
       const left = Math.max(1500, budgetUntil - Date.now());
       const r = await fetchRowsFor(targets[i], sources, h, out.errors, left);
       if (r.loading) {
         if (!waiting) { waiting = { pages: 0, rows: 0, entities: 0 }; }
         waiting.pages += r.loading.pages; waiting.rows += r.loading.rows; waiting.entities += 1;
       }
-      if (r.rows) { gotAny = true; if (!out.source) out.source = r.source; totalRows += r.rows.length; accumulate(map, r.rows, referTo, refDate, cur, rates, edges, allow, stats, targets[i]); }
+      if (r.rows) { gotAny = true; if (!out.source) out.source = r.source; totalRows += r.rows.length; accumulate(map, r.rows, referTo, refDate, cur, rates, edges, allowList, stats, targets[i], gi, glStats); }
     }
     if (waiting) { out.loading = waiting; }
     if (!gotAny) {
       if (waiting) { return res.status(202).json(out); }
       return res.status(502).json(out);
     }
+  out.glOptions = Object.keys(glOptMap).map(function (k) { return glOptMap[k]; }).sort(function (x, y) { return String(x.description).localeCompare(String(y.description)); });
+  out.glUsed = Object.keys(glStats).map(function (k) { return glStats[k]; }).sort(function (x, y) { return y.count - x.count; });
     const done = finalize(map, edges);
     out.accounts = done.accounts; out.totals = done.totals; out.itemCount = totalRows; out.skippedRows = stats.skipped;
     res.json(out);
@@ -435,7 +519,7 @@ module.exports = function (getToken) {
   }
   return res.status(502).json({ error: 'no source worked', errors: errors });
   });
-  router.get('/api/ageing-ap', function (req, res) { return handleAgeing(req, res, { sources: AP_SOURCES, edges: AP_EDGES, gl: AP_DESCRIPTIONS }); });
+  router.get('/api/ageing-ap', function (req, res) { return handleAgeing(req, res, { sources: AP_SOURCES, edges: AP_EDGES, gl: [], withGl: true }); });
   router.get('/api/ageing-ar', function (req, res) { return handleAgeing(req, res, { sources: AR_SOURCES, edges: AR_EDGES, gl: [] }); });
   // ---- Keeping the numbers warm ------------------------------------------
   // Exact Online hands out sixty rows per call and only about sixty calls a
@@ -474,6 +558,7 @@ module.exports = function (getToken) {
         while (next < list.length) {
           const t = list[next];
           next = next + 1;
+        try { await apGlInfo(t.division, h); } catch (e) { }
           try { await fetchAll(t.division, t.path, h, 600, 240000); }
           catch (e) { /* the next round tries again */ }
           warmInfo.done = warmInfo.done + 1;
