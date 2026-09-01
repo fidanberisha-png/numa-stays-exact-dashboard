@@ -124,7 +124,7 @@ module.exports = function (getToken) {
       // Work that only fills the picture in, like looking up the payable G/L
       // account of an open item, may use no more than a third of the minute, so
       // a report on the screen is never left waiting behind it.
-      const cap = soft ? Math.ceil(MAX_PER_MIN / 3) : MAX_PER_MIN;
+      const cap = soft ? Math.ceil(MAX_PER_MIN / 2) : MAX_PER_MIN;
       if (log.length < cap) { log.push(now); return; }
       await sleep(1000);
     }
@@ -386,7 +386,7 @@ module.exports = function (getToken) {
   async function apGlInfo(division, h) {
     const hit = glInfoCache[division];
     if (hit && (Date.now() - hit.at) < GL_TTL_MS) { return hit; }
-    const info = { at: Date.now(), accounts: [], byJournal: {}, fallback: null, byEntry: {}, entryTried: {}, resolving: 0, wanted: {} };
+    const info = { at: Date.now(), accounts: [], byJournal: {}, fallback: null, byEntry: {}, entryTried: {}, resolving: 0, wanted: {}, byPair: {}, stat: { tried: 0, found: 0, fail: 0, noEntry: 0, calls: 0 } };
     try {
       const accs = await fetchAll(division, 'financial/GLAccounts?$select=Code,Description,Type&$filter=Type eq ' + AP_GL_TYPE, h, 10, 25000);
       accs.forEach(function (a) {
@@ -412,9 +412,6 @@ module.exports = function (getToken) {
         const gc = String(j.GLAccountCode === undefined || j.GLAccountCode === null ? '' : j.GLAccountCode).trim();
         const gd = String(j.GLAccountDescription || '').trim();
         if (!jc || (!gc && !gd)) { return; }
-        let jw = info.wanted[gc] !== undefined;
-        if (!jw) { for (let q = 0; q < AP_DESCRIPTIONS.length; q++) { if (norm(gd) === norm(AP_DESCRIPTIONS[q])) { jw = true; break; } } }
-        if (!jw) { return; }
         info.byJournal[jc] = { code: gc, description: gd || ('G/L ' + gc) };
         used[gc] = (used[gc] || 0) + 1;
       });
@@ -431,6 +428,10 @@ module.exports = function (getToken) {
     if (!info) { return null; }
     // The journal entry itself is the truth, so it comes first.
     const en = String(row.EntryNumber === undefined || row.EntryNumber === null ? '' : row.EntryNumber).trim();
+    const ac = String(row.AccountCode === undefined || row.AccountCode === null ? '' : row.AccountCode).trim();
+    // One entry can hold the invoices of several suppliers on several payable
+    // accounts, so the line of this very supplier is looked at first.
+    if (en && ac && info.byPair[en + '|' + ac]) { return info.byPair[en + '|' + ac]; }
     if (en && info.byEntry[en]) { return info.byEntry[en]; }
     const jc = String(row.JournalCode === undefined || row.JournalCode === null ? '' : row.JournalCode).trim();
     // The account of the journal is a provisional answer, used only while the
@@ -450,8 +451,9 @@ module.exports = function (getToken) {
   // entry number. For an item that did not come from a purchase journal the
   // journal entry is read and the line that sits on a payable account of this
   // entity is taken, which is the account Exact really books the item on.
-  const ENTRY_CHUNK = 100;
+  const ENTRY_CHUNK = 50;
   const ENTRY_MAX = 30000;
+  const RESOLVE_LANES = 3;
   const entryRunning = {};
   function yearOfRow(row) {
     const d = toDate(row.InvoiceDate) || toDate(row.Date) || toDate(row.DueDate);
@@ -461,7 +463,7 @@ module.exports = function (getToken) {
     let url = BASE + '/' + division + '/' + path;
     let rows = [];
     let pages = 0;
-    while (url && pages < 20) {
+    while (url && pages < 60) {
       const r = await getEx(url, function () { return headers() || h; }, true);
       const d = r.data && r.data.d ? r.data.d : r.data;
       const part = d && d.results ? d.results : (Array.isArray(d) ? d : []);
@@ -473,54 +475,76 @@ module.exports = function (getToken) {
   }
   async function resolveEntries(division, info, list, h) {
     const codes = {};
-    // Only the payable accounts that carry figures are accepted, so an item is
-    // never counted on an account the dashboard shows the name of alone. An
-    // entity that does not use these names keeps all of its payable accounts.
-    const wset = (info.wanted && Object.keys(info.wanted).length) ? info.wanted : null;
-    if (wset) { Object.keys(wset).forEach(function (c) { codes[c] = wset[c]; }); }
-    else { info.accounts.forEach(function (a) { if (a.code) { codes[String(a.code)] = a.description; } }); }
-    const byYear = {};
-    list.forEach(function (x) { const y = '0'; if (!byYear[y]) { byYear[y] = []; } byYear[y].push(String(x[0])); });
-    const years = Object.keys(byYear);
-    for (let yi = 0; yi < years.length; yi++) {
-      const y = Number(years[yi]) || 0;
-      const all = byYear[years[yi]];
-      for (let i = 0; i < all.length; i += ENTRY_CHUNK) {
-        const part = all.slice(i, i + ENTRY_CHUNK);
-        const inner = '(' + part.map(function (n) { return 'EntryNumber eq ' + n; }).join(' or ') + ')';
-        const sel = '$select=EntryNumber,GLAccountCode,GLAccountDescription';
-        // The entry number alone is asked for. The financial year used to be put
-        // in the filter as well, but Exact books an invoice of December in the
-        // next financial year, so the year hid the real account and the item was
-        // counted on the wrong payable account. An entry number is unique in a
-        // company, so no year and no period is needed.
-        const win = inner;
-        const tries = [
-          'bulk/Financial/TransactionLines?' + sel + '&$filter=' + win,
-          'financialtransaction/TransactionLines?' + sel + '&$filter=' + win,
-          'bulk/Financial/TransactionLines?' + sel + '&$filter=' + inner
-        ];
-        let rows = null;
-        for (let t = 0; t < tries.length && !rows; t++) {
-          try { rows = await readLines(division, tries[t], h); }
-          catch (e) { rows = null; }
+    info.accounts.forEach(function (a) { if (a.code) { codes[String(a.code)] = a.description; } });
+    const all = list.map(function (x) { return String(x[0]); });
+    const sel = '$select=EntryNumber,GLAccountCode,GLAccountDescription,AccountCode';
+    // The entry number alone is asked for. A filter on the financial year used
+    // to be added as well, but Exact books an invoice of December in the next
+    // financial year, so the year hid the real account and the item was counted
+    // on the wrong payable account. An entry number is unique in a company, so
+    // neither a year nor a period is needed.
+    async function readChunk(part) {
+      const inner = '(' + part.map(function (n) { return 'EntryNumber eq ' + n; }).join(' or ') + ')';
+      const tries = [
+        'bulk/Financial/TransactionLines?' + sel + '&$filter=' + inner,
+        'financialtransaction/TransactionLines?' + sel + '&$filter=' + inner
+      ];
+      for (let t = 0; t < tries.length; t++) {
+        try { const rows = await readLines(division, tries[t], h); info.stat.calls = info.stat.calls + 1; return rows; }
+        catch (e) { /* the other shape of the query is tried */ }
+      }
+      return null;
+    }
+    async function take(part) {
+      const rows = await readChunk(part);
+      if (!rows && part.length > 1) {
+        // A block Exact refuses is cut in two, so one bad entry number can never
+        // keep the others from being found.
+        const half = Math.floor(part.length / 2);
+        await take(part.slice(0, half));
+        await take(part.slice(half));
+        return;
+      }
+      const found = {};
+      const pair = {};
+      (rows || []).forEach(function (r) {
+        const n = String(r.EntryNumber === undefined || r.EntryNumber === null ? '' : r.EntryNumber).trim();
+        const gc = String(r.GLAccountCode === undefined || r.GLAccountCode === null ? '' : r.GLAccountCode).trim();
+        if (!n || !gc || codes[gc] === undefined) { return; }
+        const ac = String(r.AccountCode === undefined || r.AccountCode === null ? '' : r.AccountCode).trim();
+        // One journal entry can carry the invoices of several suppliers on
+        // several payable accounts, so the supplier of the line is kept next to
+        // the entry number: the answer is given per line, not per entry.
+        if (ac) {
+          const k = n + '|' + ac;
+          if (pair[k] !== undefined && pair[k] !== gc) { pair[k] = '?'; } else { pair[k] = gc; }
         }
-        const found = {};
-        (rows || []).forEach(function (r) {
-          const n = String(r.EntryNumber === undefined || r.EntryNumber === null ? '' : r.EntryNumber).trim();
-          const gc = String(r.GLAccountCode === undefined || r.GLAccountCode === null ? '' : r.GLAccountCode).trim();
-          if (!n || !gc || codes[gc] === undefined) { return; }
-          if (found[n] && found[n] !== gc) { found[n] = '?'; return; }
-          found[n] = gc;
-        });
-        part.forEach(function (n) {
-          if (rows) { info.entryTried[n] = 1; }
-          const gc = found[n];
-          if (gc && gc !== '?') { info.byEntry[n] = { code: gc, description: codes[gc] || ('G/L ' + gc) }; }
-        });
-        info.resolving = Math.max(0, (info.resolving || 0) - part.length);
+        if (found[n] !== undefined && found[n] !== gc) { found[n] = '?'; } else { found[n] = gc; }
+      });
+      Object.keys(pair).forEach(function (k) {
+        const gc = pair[k];
+        if (gc && gc !== '?') { info.byPair[k] = { code: gc, description: codes[gc] || ('G/L ' + gc) }; }
+      });
+      part.forEach(function (n) {
+        if (rows) { info.entryTried[n] = 1; info.stat.tried = info.stat.tried + 1; }
+        else { info.stat.fail = info.stat.fail + 1; }
+        const gc = found[n];
+        if (gc && gc !== '?') { info.byEntry[n] = { code: gc, description: codes[gc] || ('G/L ' + gc) }; info.stat.found = info.stat.found + 1; }
+      });
+      info.resolving = Math.max(0, (info.resolving || 0) - part.length);
+    }
+    let next = 0;
+    async function lane() {
+      for (;;) {
+        const i = next;
+        next = next + ENTRY_CHUNK;
+        if (i >= all.length) { return; }
+        await take(all.slice(i, i + ENTRY_CHUNK));
       }
     }
+    const lanes = [];
+    for (let i = 0; i < RESOLVE_LANES; i++) { lanes.push(lane()); }
+    await Promise.all(lanes);
     info.resolving = 0;
   }
   function pendingEntries(info, rows) {
@@ -534,7 +558,7 @@ module.exports = function (getToken) {
       // account than the journal carries - an intercompany invoice is the usual
       // case - so the account of the journal is a hint, never the answer.
       const en = String(row.EntryNumber === undefined || row.EntryNumber === null ? '' : row.EntryNumber).trim();
-      if (!en || en === '0' || !/^[0-9]+$/.test(en)) { continue; }
+      if (!en || en === '0' || !/^[0-9]+$/.test(en)) { if (info.stat) { info.stat.noEntry = info.stat.noEntry + 1; } continue; }
       if (info.byEntry[en] || info.entryTried[en] || seen[en]) { continue; }
       seen[en] = 1;
       want.push([en, yearOfRow(row)]);
@@ -624,6 +648,7 @@ module.exports = function (getToken) {
   const glStats = {};
   const glOptMap = {};
     const stats = { skipped: 0, future: 0 };
+    const resolveStats = {};
     // The whole answer gets about 40 seconds; whatever is not read by then keeps
     // reading in the background and the dashboard asks again a few seconds later.
     const budgetUntil = Date.now() + 40000;
@@ -661,6 +686,7 @@ module.exports = function (getToken) {
           accumulate(map, r.rows, referTo, refDate, cur, rates, edges, allowList, stats, targets[i], gi, glStats);
         }
         if (gi && gi.resolving) { resolvingLeft += gi.resolving; }
+      if (gi && gi.stat) { resolveStats[String(targets[i])] = { tried: gi.stat.tried, found: gi.stat.found, fail: gi.stat.fail, noEntry: gi.stat.noEntry, calls: gi.stat.calls, pairs: Object.keys(gi.byPair).length }; }
       }
     }
     const readers = [];
@@ -681,7 +707,7 @@ module.exports = function (getToken) {
   out.glOptions = Object.keys(glOptMap).map(function (k) { return glOptMap[k]; }).sort(function (x, y) { return String(x.description).localeCompare(String(y.description)); });
   out.glUsed = Object.keys(glStats).map(function (k) { return glStats[k]; }).sort(function (x, y) { return y.count - x.count; });
     const done = finalize(map, edges);
-    out.accounts = done.accounts; out.totals = done.totals; out.itemCount = totalRows; out.skippedRows = stats.skipped; out.futureRows = stats.future || 0;
+    out.accounts = done.accounts; out.totals = done.totals; out.itemCount = totalRows; out.skippedRows = stats.skipped; out.futureRows = stats.future || 0; out.resolveStats = resolveStats;
     res.json(out);
   }
   // Diagnostic: the raw rows of the list Exact keeps behind the ageing report,
