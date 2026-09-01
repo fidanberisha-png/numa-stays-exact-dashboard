@@ -272,7 +272,16 @@ module.exports = function (getToken) {
   }
   function accumulate(map, rows, referTo, refDate, currency, rates, edges, allow, stats, division, gi, glStats) {
     const nb = edges.length + 1;
+    const cutoff = refDate ? (refDate.getTime() + 86399999) : 0;
     rows.forEach(function (row) {
+    // Exact Online shows the picture as it stood on the reference date, so an
+    // item booked after that date is not part of it. Such an item used to fall
+    // into the first bucket and made the report differ from the ageing
+    // analysis of Exact Online.
+    if (cutoff) {
+      const d0 = toDate(row.InvoiceDate) || toDate(row.Date) || toDate(row.DueDate);
+      if (d0 && d0.getTime() > cutoff) { if (stats) { stats.future = (stats.future || 0) + 1; } return; }
+    }
     let ga = null;
     if (gi) {
       ga = glOfRow(row, gi);
@@ -377,7 +386,7 @@ module.exports = function (getToken) {
   async function apGlInfo(division, h) {
     const hit = glInfoCache[division];
     if (hit && (Date.now() - hit.at) < GL_TTL_MS) { return hit; }
-    const info = { at: Date.now(), accounts: [], byJournal: {}, fallback: null, byEntry: {}, entryTried: {}, resolving: 0 };
+    const info = { at: Date.now(), accounts: [], byJournal: {}, fallback: null, byEntry: {}, entryTried: {}, resolving: 0, wanted: {} };
     try {
       const accs = await fetchAll(division, 'financial/GLAccounts?$select=Code,Description,Type&$filter=Type eq ' + AP_GL_TYPE, h, 10, 25000);
       accs.forEach(function (a) {
@@ -386,6 +395,15 @@ module.exports = function (getToken) {
         if (code || desc) { info.accounts.push({ code: code, description: desc || ('G/L ' + code) }); }
       });
     } catch (e) { /* the picker simply stays empty for this entity */ }
+    // Two payable accounts carry the figures of this report; every other
+    // payable account of Exact stays a name in the picker and no open item is
+    // ever read or counted for it.
+    info.accounts.forEach(function (a) {
+      let ok = false;
+      for (let i = 0; i < AP_DESCRIPTIONS.length; i++) { if (norm(a.description) === norm(AP_DESCRIPTIONS[i])) { ok = true; break; } }
+      a.nameOnly = !ok;
+      if (ok && a.code) { info.wanted[String(a.code)] = a.description; }
+    });
     try {
       const js = await fetchAll(division, 'financial/Journals?$select=Code,Description,GLAccountCode,GLAccountDescription&$filter=Type eq ' + AP_GL_TYPE, h, 10, 25000);
       const used = {};
@@ -394,6 +412,9 @@ module.exports = function (getToken) {
         const gc = String(j.GLAccountCode === undefined || j.GLAccountCode === null ? '' : j.GLAccountCode).trim();
         const gd = String(j.GLAccountDescription || '').trim();
         if (!jc || (!gc && !gd)) { return; }
+        let jw = info.wanted[gc] !== undefined;
+        if (!jw) { for (let q = 0; q < AP_DESCRIPTIONS.length; q++) { if (norm(gd) === norm(AP_DESCRIPTIONS[q])) { jw = true; break; } } }
+        if (!jw) { return; }
         info.byJournal[jc] = { code: gc, description: gd || ('G/L ' + gc) };
         used[gc] = (used[gc] || 0) + 1;
       });
@@ -412,7 +433,9 @@ module.exports = function (getToken) {
     const en = String(row.EntryNumber === undefined || row.EntryNumber === null ? '' : row.EntryNumber).trim();
     if (en && info.byEntry[en]) { return info.byEntry[en]; }
     const jc = String(row.JournalCode === undefined || row.JournalCode === null ? '' : row.JournalCode).trim();
-    if (jc && info.byJournal[jc]) { return info.byJournal[jc]; }
+    // The account of the journal is a provisional answer, used only while the
+    // journal entry itself has not been read yet. The entry is the truth.
+    if (jc && info.byJournal[jc] && !(en && info.entryTried[en])) { return info.byJournal[jc]; }
     const desc = glText(row);
     if (desc) { return { code: glCode(row) || '', description: desc }; }
     // No silent fallback any more. An item booked through a bank or a general
@@ -428,7 +451,7 @@ module.exports = function (getToken) {
   // journal entry is read and the line that sits on a payable account of this
   // entity is taken, which is the account Exact really books the item on.
   const ENTRY_CHUNK = 100;
-  const ENTRY_MAX = 8000;
+  const ENTRY_MAX = 30000;
   const entryRunning = {};
   function yearOfRow(row) {
     const d = toDate(row.InvoiceDate) || toDate(row.Date) || toDate(row.DueDate);
@@ -450,9 +473,14 @@ module.exports = function (getToken) {
   }
   async function resolveEntries(division, info, list, h) {
     const codes = {};
-    info.accounts.forEach(function (a) { if (a.code) { codes[String(a.code)] = a.description; } });
+    // Only the payable accounts that carry figures are accepted, so an item is
+    // never counted on an account the dashboard shows the name of alone. An
+    // entity that does not use these names keeps all of its payable accounts.
+    const wset = (info.wanted && Object.keys(info.wanted).length) ? info.wanted : null;
+    if (wset) { Object.keys(wset).forEach(function (c) { codes[c] = wset[c]; }); }
+    else { info.accounts.forEach(function (a) { if (a.code) { codes[String(a.code)] = a.description; } }); }
     const byYear = {};
-    list.forEach(function (x) { const y = String(x[1] || 0); if (!byYear[y]) { byYear[y] = []; } byYear[y].push(String(x[0])); });
+    list.forEach(function (x) { const y = '0'; if (!byYear[y]) { byYear[y] = []; } byYear[y].push(String(x[0])); });
     const years = Object.keys(byYear);
     for (let yi = 0; yi < years.length; yi++) {
       const y = Number(years[yi]) || 0;
@@ -461,10 +489,12 @@ module.exports = function (getToken) {
         const part = all.slice(i, i + ENTRY_CHUNK);
         const inner = '(' + part.map(function (n) { return 'EntryNumber eq ' + n; }).join(' or ') + ')';
         const sel = '$select=EntryNumber,GLAccountCode,GLAccountDescription';
-        // An invoice of December can be booked in the next financial year, so both
-        // years are asked, and an entry number that turns up twice with two
-        // different accounts is left alone instead of being guessed.
-        const win = y > 0 ? ('(FinancialYear eq ' + y + ' or FinancialYear eq ' + (y + 1) + ') and ' + inner) : inner;
+        // The entry number alone is asked for. The financial year used to be put
+        // in the filter as well, but Exact books an invoice of December in the
+        // next financial year, so the year hid the real account and the item was
+        // counted on the wrong payable account. An entry number is unique in a
+        // company, so no year and no period is needed.
+        const win = inner;
         const tries = [
           'bulk/Financial/TransactionLines?' + sel + '&$filter=' + win,
           'financialtransaction/TransactionLines?' + sel + '&$filter=' + win,
@@ -484,7 +514,7 @@ module.exports = function (getToken) {
           found[n] = gc;
         });
         part.forEach(function (n) {
-          info.entryTried[n] = 1;
+          if (rows) { info.entryTried[n] = 1; }
           const gc = found[n];
           if (gc && gc !== '?') { info.byEntry[n] = { code: gc, description: codes[gc] || ('G/L ' + gc) }; }
         });
@@ -499,7 +529,10 @@ module.exports = function (getToken) {
     for (let i = 0; i < rows.length; i++) {
       const row = rows[i];
       const jc = String(row.JournalCode === undefined || row.JournalCode === null ? '' : row.JournalCode).trim();
-      if (jc && info.byJournal[jc]) { continue; }
+      // Every open item is looked up in its own journal entry, an item from a
+      // purchase journal too: Exact lets an entry be booked on another payable
+      // account than the journal carries - an intercompany invoice is the usual
+      // case - so the account of the journal is a hint, never the answer.
       const en = String(row.EntryNumber === undefined || row.EntryNumber === null ? '' : row.EntryNumber).trim();
       if (!en || en === '0' || !/^[0-9]+$/.test(en)) { continue; }
       if (info.byEntry[en] || info.entryTried[en] || seen[en]) { continue; }
@@ -590,7 +623,7 @@ module.exports = function (getToken) {
     const map = {}; let totalRows = 0; let gotAny = false;
   const glStats = {};
   const glOptMap = {};
-    const stats = { skipped: 0 };
+    const stats = { skipped: 0, future: 0 };
     // The whole answer gets about 40 seconds; whatever is not read by then keeps
     // reading in the background and the dashboard asks again a few seconds later.
     const budgetUntil = Date.now() + 40000;
@@ -612,6 +645,8 @@ module.exports = function (getToken) {
             const k = norm(a.description);
             if (!glOptMap[k]) { glOptMap[k] = { description: a.description, codes: [] }; }
             if (a.code && glOptMap[k].codes.indexOf(a.code) < 0) { glOptMap[k].codes.push(a.code); }
+            if (a.nameOnly === false) { glOptMap[k].nameOnly = false; }
+            else if (glOptMap[k].nameOnly === undefined) { glOptMap[k].nameOnly = true; }
           });
         }
         const left = Math.max(1500, budgetUntil - Date.now());
@@ -646,7 +681,7 @@ module.exports = function (getToken) {
   out.glOptions = Object.keys(glOptMap).map(function (k) { return glOptMap[k]; }).sort(function (x, y) { return String(x.description).localeCompare(String(y.description)); });
   out.glUsed = Object.keys(glStats).map(function (k) { return glStats[k]; }).sort(function (x, y) { return y.count - x.count; });
     const done = finalize(map, edges);
-    out.accounts = done.accounts; out.totals = done.totals; out.itemCount = totalRows; out.skippedRows = stats.skipped;
+    out.accounts = done.accounts; out.totals = done.totals; out.itemCount = totalRows; out.skippedRows = stats.skipped; out.futureRows = stats.future || 0;
     res.json(out);
   }
   // Diagnostic: the raw rows of the list Exact keeps behind the ageing report,
