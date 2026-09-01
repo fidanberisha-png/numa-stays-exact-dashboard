@@ -440,7 +440,7 @@ setInterval(function () { conn(); load(); }, 7200000);
   // the consolidated view.
   var USERPICK = false;
   document.addEventListener('change', function (ev) {
-    if (ev && ev.isTrusted && ev.target && ev.target.id === 'company') { USERPICK = true; }
+    if (ev && ev.isTrusted && ev.target && ev.target.id === 'company') { USERPICK = true; try { glScopeCheck(); } catch (e) { } }
   }, true);
   window.fetch = function (input, init) {
     var url = (typeof input === 'string') ? input : ((input && input.url) || '');
@@ -569,6 +569,28 @@ setInterval(function () { conn(); load(); }, 7200000);
   // every account is counted, exactly like an empty selection in Exact.
   var GLKEY = 'numaApGl';
   var GLOPTS = [];
+  // The tick list has to show the payable G/L accounts of the entities that are
+  // chosen right now. It used to keep every account it had ever seen, so after a
+  // consolidated read the list of one single entity still showed the accounts of
+  // all the others. The list is therefore emptied as soon as the entity choice
+  // changes and filled again from the answers of the entities really being read.
+  var GLSHOW = [];
+  var GLSCOPE = null;
+  function glScope() {
+    var dv = '';
+    try { dv = String((document.getElementById('company') || {}).value || ''); } catch (e) { dv = ''; }
+    var pk = [];
+    try { pk = getPick() || []; } catch (e) { pk = []; }
+    return dv + '#' + pk.join(',');
+  }
+  function glScopeCheck() {
+    var s = glScope();
+    if (GLSCOPE === s) { return; }
+    GLSCOPE = s;
+    GLOPTS = [];
+    try { glPaint(); } catch (e) { }
+  }
+  window.NUMA_GLSCOPE = glScopeCheck;
   function glSel() {
     try { var v = JSON.parse(localStorage.getItem(GLKEY) || '[]'); return Array.isArray(v) ? v : []; } catch (e) { return []; }
   }
@@ -576,6 +598,7 @@ setInterval(function () { conn(); load(); }, 7200000);
   function glQ() { var s = glSel(); return s.length ? ('&gl=' + encodeURIComponent(s.join('|'))) : ''; }
   window.NUMA_GLSEL = glSel;
   function glAddOptions(list) {
+    glScopeCheck();
     if (!list || !list.length) { return; }
     var changed = false;
     list.forEach(function (o) {
@@ -636,12 +659,20 @@ setInterval(function () { conn(); load(); }, 7200000);
     var h = '<div style="font-size:11.5px;color:#6f6a6b;margin-bottom:8px">The payable G/L accounts of Exact Online. Nothing ticked means every account is counted. The accounts are held together by their description, so an account that carries another number in another entity is listed only once.</div>';
     h += '<div style="margin-bottom:8px"><button type="button" class="btn sec" id="glAll" style="padding:4px 9px;font-size:12px">Select all</button> <button type="button" class="btn sec" id="glNone" style="padding:4px 9px;font-size:12px">Clear (count all)</button></div>';
     if (!GLOPTS.length) { h += '<div style="font-size:12px;color:#6f6a6b">The list fills itself as soon as the first entity is read.</div>'; }
-    GLOPTS.forEach(function (o, i) {
+    // An account that is ticked but does not exist in the entity chosen now is
+    // still listed, so a filter is never active without being visible.
+    GLSHOW = GLOPTS.slice();
+    sel.forEach(function (d) {
+      for (var q = 0; q < GLSHOW.length; q++) { if (String(GLSHOW[q].description).toLowerCase() === String(d).toLowerCase()) { return; } }
+      GLSHOW.push({ description: String(d), codes: [], absent: true });
+    });
+    GLSHOW.forEach(function (o, i) {
       var on = sel.indexOf(o.description) > -1;
       h += '<label style="display:flex;gap:8px;align-items:flex-start;padding:4px 0;font-size:12.5px;cursor:pointer">'
         + '<input type="checkbox" class="glOpt" data-i="' + i + '"' + (on ? ' checked' : '') + ' style="margin-top:2px">'
         + '<span><b>' + esc(o.description) + '</b>'
         + (o.codes.length ? ('<span style="color:#6f6a6b"> - ' + esc(o.codes.slice(0, 8).join(', ')) + (o.codes.length > 8 ? ' ...' : '') + '</span>') : '')
+        + (o.absent ? '<span style="color:#b0463a"> - not used by this entity</span>' : '')
         + '</span></label>';
     });
     p.innerHTML = h;
@@ -653,7 +684,7 @@ setInterval(function () { conn(); load(); }, 7200000);
       c.onclick = function (ev) { ev.stopPropagation(); };
       c.onchange = function () {
         var cur = glSel();
-        var d = GLOPTS[Number(c.getAttribute('data-i'))].description;
+        var d = GLSHOW[Number(c.getAttribute('data-i'))].description;
         var at = cur.indexOf(d);
         if (c.checked && at < 0) { cur.push(d); }
         if (!c.checked && at > -1) { cur.splice(at, 1); }
@@ -689,7 +720,7 @@ setInterval(function () { conn(); load(); }, 7200000);
       return list.length ? list : ok;
     } catch (e) { return ok; }
   }
-  function setPick(list) { try { localStorage.setItem(PICKKEY, JSON.stringify(list)); } catch (e) { } }
+  function setPick(list) { try { localStorage.setItem(PICKKEY, JSON.stringify(list)); } catch (e) { } try { glScopeCheck(); } catch (e) { } }
   function pickedEnt() { var p = getPick(); return ENT.filter(function (m) { return p.indexOf(String(m[2])) > -1; }); }
   function pickLabel() { var n = getPick().length; return 'Consolidated (' + n + (n === 1 ? ' selected entity)' : ' selected entities)'); }
   function pickBtnLabel() { var n = getPick().length; return 'Entities: ' + n + ' of ' + ENT.length + ' \u25be'; }
