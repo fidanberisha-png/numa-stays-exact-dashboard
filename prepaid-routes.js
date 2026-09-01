@@ -8,7 +8,7 @@ const axios = require('axios');
 
 const REGION = process.env.EXACT_REGION || 'nl';
 const BASE = 'https://start.exactonline.' + REGION + '/api/v1';
-const TTL = 45 * 60 * 1000;
+const TTL = 2 * 60 * 60 * 1000;
 const cache = {};
 
 // Journal 91 was used as the example of how a prepayment is written down. All
@@ -131,12 +131,30 @@ module.exports = function (getToken) {
     // Exact allows only about sixty calls a minute per company. Reading a large
     // entity therefore has to wait its turn, and a refusal is retried with a
     // short backoff instead of turning into an error on the screen.
-    // All the dashboards of this server share the one budget Exact Online counts
-    // per division: about sixty calls a minute. The queue therefore lives on the
-    // process instead of in this file, otherwise the accrued, prepaid and ageing
-    // reports would each spend sixty calls of the very same minute and Exact
-    // would refuse them all.
-    const CALL_LOG = (global.__numaRate = global.__numaRate || {});
+// Exact Online keeps a day budget per company (five thousand calls) next to the
+// minute budget. Once it is gone every further call is refused, so asking again
+// only makes a screen wait for nothing. The company is then put aside until the
+// reset Exact names, and the answer says so in plain words.
+const BLOCKED = {};
+function blockNote(division) {
+  const b = BLOCKED[division];
+  if (!b) { return null; }
+  if (b.until && Date.now() > b.until) { delete BLOCKED[division]; return null; }
+  return b.message;
+}
+function noteRefusal(division, e) {
+  const rs = e && e.response;
+  if (!rs || rs.status !== 429 || !rs.headers) { return; }
+  const left = Number(rs.headers['x-ratelimit-remaining']);
+  if (isNaN(left) || left > 0) { return; }
+  const ms = Number(rs.headers['x-ratelimit-reset']);
+  const until = (!isNaN(ms) && ms > Date.now()) ? ms : (Date.now() + 30 * 60 * 1000);
+  const when = new Date(until);
+  const stamp = isNaN(when.getTime()) ? 'the next reset' : (when.toISOString().slice(0, 16).replace('T', ' ') + ' UTC');
+  BLOCKED[division] = { until: until, message: 'Exact Online has no calls left today for this entity (day limit ' + (rs.headers['x-ratelimit-limit'] || '?') + '). It is free again on ' + stamp + '.' };
+}
+
+    const CALL_LOG = {};
     const MAX_PER_MIN = 55;
     function sleep(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
     function divOf(u) { const m = /\/api\/v1\/(\d+)\//.exec(String(u || '')); return m ? m[1] : 'x'; }
@@ -156,12 +174,19 @@ module.exports = function (getToken) {
         let wait = 1200;
         let last = null;
         for (let i = 0; i < 4; i++) {
-            await slot(url);
+    const dv = divOf(url);
+    const stop = blockNote(dv);
+    if (stop) { const be = new Error(stop); be.blocked = true; be.division = dv; throw be; }
+    await slot(url);
             try { return await axios.get(url, { headers: h, timeout: 60000 }); }
             catch (e) {
                 last = e;
                 const st = e.response ? e.response.status : 0;
-                if (st !== 429 && st !== 502 && st !== 503) throw e;
+      if (st === 429) {
+        noteRefusal(dv, e);
+        if (BLOCKED[dv]) { const be = new Error(BLOCKED[dv].message); be.blocked = true; be.division = dv; throw be; }
+      }
+      if (st !== 429 && st !== 502 && st !== 503) throw e;
                 if (i === 3) throw e;
                 const ra = Number(e.response && e.response.headers ? e.response.headers['retry-after'] : 0);
                 let ms = ra > 0 ? ra * 1000 : wait;
@@ -331,30 +356,10 @@ module.exports = function (getToken) {
         const sel = 'EntryNumber,GLAccountCode,GLAccountDescription,AmountDC,CostCenter,CostCenterDescription,CostUnit,CostUnitDescription,YourRef,InvoiceNumber,AccountName';
         const out = {};
         const keys = Object.keys(spans);
-        // The spans are read next to each other instead of one after the other. Exact
-        // Online counts its limit per entity, and every span used to wait for the one
-        // before it, which is what made a large entity take minutes.
-        const spanRows = new Array(keys.length);
-        let spanErr = null;
-        let nextSpan = 0;
-        async function spanLane() {
-            for (;;) {
-                const si = nextSpan++;
-                if (si >= keys.length) return;
-                const sp = spans[keys[si]];
-                const ff = (sp.year ? 'FinancialYear eq ' + sp.year + ' and ' : '') + 'EntryNumber ge ' + sp.min + ' and EntryNumber le ' + sp.max;
-                try { spanRows[si] = await fetchAll(division, 'bulk/Financial/TransactionLines?$select=' + sel + '&$filter=' + ff, h, 60); }
-                catch (e) { if (!spanErr) spanErr = e; spanRows[si] = []; }
-            }
-        }
-        const spanLanes = [];
-        for (let i = 0; i < Math.min(5, keys.length); i++) { spanLanes.push(spanLane()); }
-        await Promise.all(spanLanes);
-        if (spanErr) throw spanErr;
         for (let i = 0; i < keys.length; i++) {
             const s = spans[keys[i]];
             const f = (s.year ? 'FinancialYear eq ' + s.year + ' and ' : '') + 'EntryNumber ge ' + s.min + ' and EntryNumber le ' + s.max;
-            const rs = spanRows[i] || [];
+            const rs = await fetchAll(division, 'bulk/Financial/TransactionLines?$select=' + sel + '&$filter=' + f, h, 60);
             rs.forEach(function (r) {
                 const n = Number(r.EntryNumber) || 0;
                 if (!n) return;
@@ -689,8 +694,8 @@ module.exports = function (getToken) {
     // walks through the entities of the dashboard and refills the cache. A
     // summary that is opened afterwards is answered from memory.
     const WARM_START_MS = 45000;
-    const WARM_EVERY_MS = 20 * 60 * 1000;
-    const WARM_LANES = 6;
+    const WARM_EVERY_MS = 2 * 60 * 60 * 1000;
+    const WARM_LANES = 4;
     const WARM_CODES = [3784237, 3745758, 3745759, 3745760, 3745740, 3751399, 3708480, 3642741, 2657065, 3383979, 3693157, 3706020, 3716405, 3741441, 3717706, 3900740, 3725452, 3732987, 3745729];
     let warmRunning = false;
     let warmInfo = { at: null, done: 0, total: 0, ms: 0 };
