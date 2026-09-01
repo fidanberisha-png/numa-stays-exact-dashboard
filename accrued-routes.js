@@ -20,10 +20,8 @@ module.exports = function (getToken) {
     // budget is gone. Waiting for a free slot before asking is friendlier than being
     // refused and retrying, so a division never spends more than BUDGET requests in
     // any rolling minute and a busy entity simply takes a little longer.
-    // All the dashboards of this server share the one budget Exact Online counts
-    // per division, so the queue lives on the process instead of in this file.
-    const RATE = (global.__numaRate = global.__numaRate || {});
-    const BUDGET = 55;
+    const RATE = {};
+    const BUDGET = 50;
     async function slot(division) {
         for (let guard = 0; guard < 200; guard++) {
             if (!RATE[division]) RATE[division] = [];
@@ -42,7 +40,7 @@ module.exports = function (getToken) {
     // opening all entities pays that price only once. The Refresh button asks for
     // fresh data and always goes back to Exact.
     const CACHE = new Map();
-    const CACHE_TTL = 20 * 60 * 1000;
+    const CACHE_TTL = 2 * 60 * 60 * 1000;
     function cacheGet(key, fresh) {
         if (fresh) { CACHE.delete(key); return null; }
         const hit = CACHE.get(key);
@@ -65,7 +63,7 @@ module.exports = function (getToken) {
     // accounts of one entity does not read the same entry nine times over. This is
     // what keeps the merged view inside the request budget of Exact.
     const LINES = new Map();
-    const LINES_TTL = 20 * 60 * 1000;
+    const LINES_TTL = 2 * 60 * 60 * 1000;
     function lineKey(division, year, entry) { return division + '|' + year + '|' + entry; }
     function lineGet(division, year, entry) {
         const k = lineKey(division, year, entry);
@@ -78,13 +76,48 @@ module.exports = function (getToken) {
         if (LINES.size > 8000) LINES.clear();
         LINES.set(lineKey(division, year, entry), { at: Date.now(), rows: rows });
     }
+  // A Refresh has to go back to Exact for real, so the remembered lines of that
+  // division and financial year are thrown away together with the answer.
+  function lineDrop(division, year) {
+    const p = division + '|' + year + '|';
+    const kill = [];
+    LINES.forEach(function (v, k) { if (k.indexOf(p) === 0) { kill.push(k); } });
+    kill.forEach(function (k) { LINES.delete(k); });
+  }
+
+  // Next to the minute budget Exact Online keeps a day budget per company. Once
+  // that is gone every further call is refused, so the company is put aside until
+  // the reset Exact names and the dashboard is told in plain words instead of
+  // spending the rest of the budget on refusals.
+  const BLOCKED = {};
+  function divOfUrl(u) { const m = /\/api\/v1\/(\d+)\//.exec(String(u || '')); return m ? m[1] : 'x'; }
+  function blockNote(division) {
+    const b = BLOCKED[division];
+    if (!b) { return null; }
+    if (b.until && Date.now() > b.until) { delete BLOCKED[division]; return null; }
+    return b.message;
+  }
+  function noteRefusal(division, e) {
+    const rs = e && e.response;
+    if (!rs || rs.status !== 429 || !rs.headers) { return; }
+    const left = Number(rs.headers['x-ratelimit-remaining']);
+    if (isNaN(left) || left > 0) { return; }
+    const ms = Number(rs.headers['x-ratelimit-reset']);
+    const until = (!isNaN(ms) && ms > Date.now()) ? ms : (Date.now() + 30 * 60 * 1000);
+    const when = new Date(until);
+    const stamp = isNaN(when.getTime()) ? 'the next reset' : (when.toISOString().slice(0, 16).replace('T', ' ') + ' UTC');
+    BLOCKED[division] = { until: until, message: 'Exact Online has no calls left today for this entity (day limit ' + (rs.headers['x-ratelimit-limit'] || '?') + '). It is free again on ' + stamp + '.' };
+  }
 
     async function getWithRetry(url, h, attempts) {
-        const n = attempts || 4;
+        const n = attempts || 5;
         let last = null;
         for (let i = 0; i < n; i++) {
             try {
-                return await axios.get(url, { headers: h, timeout: 120000 });
+        const dvv = divOfUrl(url);
+        const stopMsg = blockNote(dvv);
+        if (stopMsg) { const be = new Error(stopMsg); be.blocked = true; throw be; }
+        return await axios.get(url, { headers: h, timeout: 30000 });
             } catch (e) {
                 last = e;
                 if (e.response && e.response.status === 429 && e.response.headers) {
@@ -101,8 +134,9 @@ module.exports = function (getToken) {
                                 // The day budget of a division is gone: retrying only wastes
                                 // requests and hides the real reason, so give up right away.
                                 const dayLeft = e.rate ? Number(e.rate.remaining) : NaN;
-                                if (status === 429 && !isNaN(dayLeft) && dayLeft <= 0) { throw e; }
-                if ((status === 429 || status === 503) && i < n - 1) {
+      noteRefusal(divOfUrl(url), e);
+      if (status === 429 && !isNaN(dayLeft) && dayLeft <= 0) { throw e; }
+                if ((status === 429 || status === 503 || status === 504 || !e.response) && i < n - 1) {
                     const retryAfter = e.response.headers && e.response.headers['retry-after'];
                     const wait = retryAfter ? Math.min(Number(retryAfter) * 1000, 20000) : (900 * (i + 1));
                     await sleep(wait);
@@ -151,93 +185,81 @@ module.exports = function (getToken) {
             rows = rows.concat(part);
             url = d && d.__next ? d.__next : null;
             pages = pages + 1;
-            if (url) await sleep(40);
+            if (url) await sleep(150);
         }
         // A page limit that is hit silently is what used to make counter lines disappear,
         // so the caller is told about it instead of getting half of the journal entry.
         if (url && meta) meta.truncated = true;
+    if (meta) { meta.pages = (meta.pages || 0) + pages; }
         return rows;
     }
     const SELECT_FULL = 'Date,EntryID,EntryNumber,JournalCode,JournalDescription,Description,AccountCode,AccountName,AmountDC,FinancialPeriod,FinancialYear,GLAccountCode,GLAccountDescription,LineNumber,Status,CostCenter,CostCenterDescription';
     const SELECT_MIN = 'Date,EntryID,EntryNumber,JournalCode,Description,AmountDC,FinancialPeriod,FinancialYear,GLAccountCode,GLAccountDescription,LineNumber,CostCenter,CostCenterDescription';
 
-    // Exact Online is picky about paths, $select and $orderby on transaction lines,
-    // so every query is tried in a few variants until one succeeds.
-    async function fetchLines(division, filter, orderby, h, opts) {
-        const o = opts || {};
-        const P1 = 'financialtransaction/TransactionLines';
-        const P2 = 'bulk/Financial/TransactionLines';
-        // The summary needs no more than the small set of fields, and every extra
-        // variant that Exact refuses costs a whole timeout, so those reads ask for
-        // the small set only.
-        const small = o.minOnly ? [
-            P1 + '?$filter=' + filter + '&$select=' + SELECT_MIN,
-            P1 + '?$filter=' + filter
-        ] : [
-            P1 + '?$filter=' + filter + '&$orderby=' + orderby + '&$select=' + SELECT_FULL,
-            P1 + '?$filter=' + filter + '&$select=' + SELECT_FULL,
-            P1 + '?$filter=' + filter + '&$select=' + SELECT_MIN,
-            P1 + '?$filter=' + filter
-        ];
-        const bulk = o.minOnly ? [
-            P2 + '?$filter=' + filter + '&$select=' + SELECT_MIN,
-            P2 + '?$filter=' + filter
-        ] : [
-            P2 + '?$filter=' + filter + '&$select=' + SELECT_FULL,
-            P2 + '?$filter=' + filter + '&$select=' + SELECT_MIN,
-            P2 + '?$filter=' + filter
-        ];
-        // A bulk page holds 1000 lines, a normal page only 60. Month end and year end
-        // entries can carry thousands of lines, so bulk is asked first for those.
-        const tries = o.bulkFirst ? bulk.concat(small) : small.concat(bulk);
-        const cap = o.maxPages || 40;
-        let last = null;
-        for (let i = 0; i < tries.length; i++) {
-            try {
-                return await fetchAll(division, tries[i], h, cap, o.meta);
-            } catch (e) {
-                last = e;
-                const st = e.response && e.response.status;
-                if (st === 401 || st === 403) throw e;
-            }
-        }
-        throw last;
+  // Exact Online is picky about paths, $select and $orderby on transaction lines,
+  // so every query is tried in a few variants until one succeeds. Two things were
+  // learned the hard way and they decide the speed of the whole dashboard: a bulk
+  // page holds a thousand lines where a normal page holds sixty, but bulk refuses
+  // every filter that names a G/L account. A G/L question is therefore never asked
+  // in bulk, everything else is asked in bulk first, and the variant that worked
+  // for a company is remembered so the refused ones are not paid for again.
+  const VARIANT = {};
+  async function fetchLines(division, filter, orderby, h, opts) {
+    const o = opts || {};
+    const P1 = 'financialtransaction/TransactionLines';
+    const P2 = 'bulk/Financial/TransactionLines';
+    const mk = {
+      b1: P2 + '?$filter=' + filter + '&$select=' + SELECT_FULL,
+      b2: P2 + '?$filter=' + filter + '&$select=' + SELECT_MIN,
+      b3: P2 + '?$filter=' + filter,
+      s1: P1 + '?$filter=' + filter + '&$orderby=' + orderby + '&$select=' + SELECT_FULL,
+      s2: P1 + '?$filter=' + filter + '&$select=' + SELECT_FULL,
+      s3: P1 + '?$filter=' + filter + '&$select=' + SELECT_MIN,
+      s4: P1 + '?$filter=' + filter
+    };
+    const hasGl = filter.indexOf('GLAccountCode') > -1;
+    let tags = hasGl
+      ? ['s1', 's2', 's3', 's4']
+      : (o.bulkFirst ? ['b1', 'b2', 'b3', 's1', 's2', 's3', 's4'] : ['s1', 's2', 's3', 's4', 'b1', 'b2', 'b3']);
+    const wkey = division + '|' + (hasGl ? 'gl' : 'plain') + '|' + (o.bulkFirst ? 'b' : 's');
+    const won = VARIANT[wkey];
+    if (won && mk[won] && tags.indexOf(won) > 0) {
+      tags = [won].concat(tags.filter(function (t) { return t !== won; }));
     }
+    const cap = o.maxPages || 40;
+    let last = null;
+    for (let i = 0; i < tags.length; i++) {
+      try {
+        const rows = await fetchAll(division, mk[tags[i]], h, cap, o.meta);
+        VARIANT[wkey] = tags[i];
+        return rows;
+      } catch (e) {
+        last = e;
+        const st = e.response && e.response.status;
+        if (st === 401 || st === 403) throw e;
+        // A refusal is about the budget of the company, not about the variant:
+        // asking the same question in another shape only burns more of it.
+        if (st === 429 || e.blocked) throw e;
+      }
+    }
+    throw last;
+  }
 
-    // A whole financial year of one G/L account is a heavy scan for Exact Online,
-    // and a heavy scan is what runs into the timeout: the year of a large entity
-    // like 610 or 900 simply never came back and the screen waited for nothing.
-    // The year is therefore asked period by period. Seventeen small reads that run
-    // next to each other are far quicker than one big one, and if Exact does not
-    // like the period filter the whole year is still asked the old way.
-    async function fetchYearLines(division, year, code, h, meta, minOnly) {
-        const base = 'FinancialYear eq ' + year +
-            " and GLAccountCode ge '" + code + "' and GLAccountCode le '" + code + "zzzz'";
-        const parts = new Array(17);
-        let failed = null;
-        let next = 0;
-        async function lane() {
-            for (;;) {
-                if (failed) return;
-                const i = next++;
-                if (i > 16) return;
-                const m = {};
-                try {
-                    parts[i] = await fetchLines(division, base + ' and FinancialPeriod eq ' + i, 'EntryNumber', h, { bulkFirst: true, maxPages: 100, meta: m, minOnly: minOnly });
-                    if (m.truncated && meta) meta.truncated = true;
-                } catch (e) { failed = e; }
-            }
-        }
-        const lanes = [];
-        for (let i = 0; i < 6; i++) { lanes.push(lane()); }
-        await Promise.all(lanes);
-        if (!failed) {
-            let all = [];
-            for (let i = 0; i < parts.length; i++) { if (parts[i] && parts[i].length) { all = all.concat(parts[i]); } }
-            return all;
-        }
-        return await fetchLines(division, base, 'Date,EntryNumber', h, { bulkFirst: true, maxPages: 400, meta: meta || {}, minOnly: minOnly });
+  // The lines that sit on the accrual account itself. In some companies Exact
+  // keeps the code padded, so the plain question is asked first and the wider
+  // one only when it stays empty.
+  async function accrualLines(division, year, code, h, meta) {
+    const f1 = 'FinancialYear eq ' + year + " and GLAccountCode eq '" + code + "'";
+    let rows = await fetchLines(division, f1, 'Date,EntryNumber', h, { maxPages: 400, meta: meta });
+    let lines = rows.map(mapLine).filter(function (l) { return l.glCode === code; });
+    if (!lines.length) {
+      const f2 = 'FinancialYear eq ' + year +
+        " and GLAccountCode ge '" + code + "' and GLAccountCode le '" + code + "zzzz'";
+      rows = await fetchLines(division, f2, 'Date,EntryNumber', h, { maxPages: 400, meta: meta });
+      lines = rows.map(mapLine).filter(function (l) { return l.glCode === code; });
     }
+    return lines;
+  }
 
     function txt(v) { return (v === null || v === undefined) ? '' : String(v).trim(); }
 
@@ -320,10 +342,7 @@ module.exports = function (getToken) {
         const hit = cacheGet(ckey, fresh);
         if (hit) return res.json(hit);
         try {
-            const filter = 'FinancialYear eq ' + year +
-                " and GLAccountCode ge '" + code + "' and GLAccountCode le '" + code + "zzzz'";
-            const rows = await fetchYearLines(division, year, code, h, null, false);
-            const lines = rows.map(mapLine).filter(function (l) { return l.glCode === code; });
+      const lines = await accrualLines(division, year, code, h, null);
             return sendCached(res, ckey, {
                 division: division,
                 year: year,
@@ -344,280 +363,243 @@ module.exports = function (getToken) {
         }
     });
 
-    // ---- The accrued summary as a background job ------------------------------
-    // The summary of one entity, one financial year and one accrual account used to
-    // be built inside the request itself: the journal entries were read sixty at a
-    // time, one block strictly after the other, and nothing at all was answered
-    // until the very last block was in. A large entity like 610 or 900 therefore
-    // left the screen empty for many minutes. The work now runs as a job that reads
-    // several blocks of sixty next to each other and hands every finished block over
-    // at once, so the dashboard fills itself while Exact Online is still being read.
-    // A second request for the same job does not start the work again, it simply
-    // takes what is already there.
-    const SUMJOBS = new Map();
-    const SUM_LANES = 5;
-    const SUM_CHUNK = 60;
-    function startSummaryJob(key, division, year, code, h) {
-        const job = {
-            at: Date.now(), done: false, err: null, rows: [], errs: [],
-            entries: 0, ready: 0, accrualLines: 0,
-            gross: { debit: 0, credit: 0, balance: 0, balanced: true, count: 0 }
-        };
-        if (SUMJOBS.size > 200) SUMJOBS.clear();
-        SUMJOBS.set(key, job);
-        (async function () {
-            try {
-                const filter = 'FinancialYear eq ' + year +
-                    " and GLAccountCode ge '" + code + "' and GLAccountCode le '" + code + "zzzz'";
-                const baseMeta = {};
-                const raw = await fetchYearLines(division, year, code, h, baseMeta, true);
-                const base = raw.map(mapLine).filter(function (l) { return l.glCode === code; });
-                job.accrualLines = base.length;
-                job.gross = totalsOf(base);
-                if (baseMeta.truncated) job.errs.push('accrual lines: Exact paging was cut off, the year is incomplete');
-                const want = {};
-                const nums = [];
-                const byEntry = {};
-                base.forEach(function (l) {
-                    const k = String(l.entryNumber);
-                    if (!k) return;
-                    if (!want[k]) { want[k] = 1; nums.push(k); byEntry[k] = []; }
-                    byEntry[k].push(l);
-                });
-                job.entries = nums.length;
-                const counter = {};
-                // An entry whose lines are known is marked, so the second pass below can
-                // tell a real bookkeeping gap from an entry that was simply never read.
-                const done = {};
-                function useLines(n, all) {
-                    done[n] = 1;
-                    const keep = all.filter(function (l) { return l.glCode !== code; });
-                    if (keep.length) { counter[n] = keep; } else { delete counter[n]; }
-                }
-                async function grab(list) {
-                    if (!list.length) return;
-                    const need = list.filter(function (n) {
-                        const c = lineGet(division, year, n);
-                        if (!c) return true;
-                        useLines(n, c);
-                        return false;
-                    });
-                    if (!need.length) return;
-                    list = need;
-                    const f = 'FinancialYear eq ' + year + ' and (' + list.map(function (n) { return 'EntryNumber eq ' + n; }).join(' or ') + ')';
-                    const meta = {};
-                    try {
-                        const lines = await fetchLines(division, f, 'EntryNumber', h, { bulkFirst: true, maxPages: 400, meta: meta });
-                        const got = {};
-                        lines.map(mapLine).forEach(function (l) {
-                            const k = String(l.entryNumber);
-                            if (!want[k]) return;
-                            if (!got[k]) got[k] = [];
-                            got[k].push(l);
-                        });
-                        if (!meta.truncated) {
-                            list.forEach(function (n) { lineSet(division, year, n, got[n] || []); });
-                        }
-                        list.forEach(function (n) { useLines(n, got[n] || []); });
-                        if (meta.truncated && list.length > 1) {
-                            // Half of a journal entry is worse than no answer, so the block is
-                            // thrown away and asked again in smaller pieces.
-                            list.forEach(function (n) { delete counter[n]; delete done[n]; });
-                            const half2 = Math.ceil(list.length / 2);
-                            await grab(list.slice(0, half2));
-                            await grab(list.slice(half2));
-                        } else if (meta.truncated) {
-                            job.errs.push('entry ' + list[0] + ': Exact paging was cut off');
-                        }
-                    } catch (e) {
-                        if (list.length > 1) {
-                            const half = Math.ceil(list.length / 2);
-                            await grab(list.slice(0, half));
-                            await grab(list.slice(half));
-                        } else {
-                            job.errs.push('entries ' + list[0] + ' - ' + list[list.length - 1] + ': ' + e.message);
-                        }
-                    }
-                }
-                // The line on the accrual account itself is the truth: cost centre, period
-                // and amount are taken from it, so every cell of the dashboard ties back to
-                // the G/L account in Exact Online. The counter lines of the same entry only
-                // give the name of the expense account. A single journal entry can carry
-                // many accruals for different cost centres and periods, so the counter
-                // lines are matched on cost centre + period first, then cost centre, then
-                // period, and only after that spread pro rata over the remaining lines.
-                function pick(list, cc, per) {
-                    const live = list.filter(function (l) { return Math.abs(l.amount) > 0.000001; });
-                    let s = live.filter(function (l) { return (l.costCenter || '') === cc && String(l.period) === String(per); });
-                    if (s.length) return s;
-                    s = live.filter(function (l) { return (l.costCenter || '') === cc; });
-                    if (s.length) return s;
-                    s = live.filter(function (l) { return String(l.period) === String(per); });
-                    if (s.length) return s;
-                    return live;
-                }
-                // The rows of a block of entries. An entry that was not read at all is left
-                // for the second pass, so a paging problem is never shown as if the
-                // bookkeeping were incomplete.
-                function buildRows(list, final) {
-                    const rows = [];
-                    list.forEach(function (n) {
-                        if (!final && !done[n]) return;
-                        (byEntry[n] || []).forEach(function (acc) {
-                            const target = -acc.amount;
-                            const cc = acc.costCenter || '';
-                            const sel = pick(counter[String(acc.entryNumber)] || [], cc, acc.period);
-                            if (!sel.length) {
-                                rows.push({
-                                    entryNumber: acc.entryNumber, entryId: acc.entryId, date: acc.date,
-                                    year: acc.year, period: acc.period, glCode: '', glDescription: '',
-                                    noCounter: true,
-                                    costCenter: cc, costCenterName: acc.costCenterName,
-                                    description: acc.description,
-                                    debit: target > 0 ? target : 0, credit: target < 0 ? -target : 0, amount: target
-                                });
-                                return;
-                            }
-                            const tot = sel.reduce(function (s, l) { return s + Math.abs(l.amount); }, 0);
-                            let used = 0;
-                            sel.forEach(function (l, i) {
-                                const v = (i === sel.length - 1)
-                                    ? Math.round((target - used) * 100) / 100
-                                    : Math.round(target * Math.abs(l.amount) / tot * 100) / 100;
-                                used = Math.round((used + v) * 100) / 100;
-                                if (Math.abs(v) < 0.000001 && sel.length > 1) return;
-                                rows.push({
-                                    entryNumber: acc.entryNumber, entryId: acc.entryId, date: acc.date,
-                                    year: acc.year, period: acc.period,
-                                    glCode: l.glCode, glDescription: l.glDescription,
-                                    costCenter: cc, costCenterName: acc.costCenterName || l.costCenterName,
-                                    description: l.description || acc.description,
-                                    debit: v > 0 ? v : 0, credit: v < 0 ? -v : 0, amount: v
-                                });
-                            });
-                        });
-                    });
-                    // One accrual can be spread over several counter accounts, so the pieces
-                    // are added up again per entry, cost centre, period and G/L account. This
-                    // only shortens the list, the amounts stay exactly the same.
-                    const agg = {};
-                    const order = [];
-                    rows.forEach(function (r) {
-                        const k = r.entryNumber + '|' + r.costCenter + '|' + r.year + '|' + r.period + '|' + r.glCode;
-                        if (!agg[k]) { agg[k] = r; order.push(k); return; }
-                        const t = agg[k];
-                        t.amount = Math.round((t.amount + r.amount) * 100) / 100;
-                        t.debit = t.amount > 0 ? t.amount : 0;
-                        t.credit = t.amount < 0 ? -t.amount : 0;
-                    });
-                    return order.map(function (k) { return agg[k]; }).filter(function (r) { return Math.abs(r.amount) > 0.000001; });
-                }
-                // Sixty entries per request keeps the number of calls to Exact low. Five
-                // blocks are on their way at the same time and every block that comes back
-                // is handed over at once, so the sixty rows just read are on the screen
-                // while the next sixty are still being fetched.
-                const chunks = [];
-                for (let i = 0; i < nums.length; i += SUM_CHUNK) { chunks.push(nums.slice(i, i + SUM_CHUNK)); }
-                let nextChunk = 0;
-                async function chunkLane() {
-                    for (;;) {
-                        const ci = nextChunk++;
-                        if (ci >= chunks.length) return;
-                        const list = chunks[ci];
-                        await grab(list);
-                        const part = buildRows(list, false);
-                        if (part.length) { job.rows = job.rows.concat(part); }
-                        job.ready = job.ready + list.length;
-                    }
-                }
-                const lanes = [];
-                const wide = Math.min(SUM_LANES, chunks.length);
-                for (let i = 0; i < wide; i++) { lanes.push(chunkLane()); }
-                await Promise.all(lanes);
-                // Second pass: an entry that still has no counter line is asked on its own.
-                const orphans = nums.filter(function (n) { return (!counter[n] || !counter[n].length) && !done[n]; });
-                let nextOrphan = 0;
-                async function orphanLane() {
-                    for (;;) {
-                        const oi = nextOrphan++;
-                        if (oi >= orphans.length) return;
-                        const n = orphans[oi];
-                        const m2 = {};
-                        try {
-                            const lines = await fetchLines(division, 'FinancialYear eq ' + year + ' and EntryNumber eq ' + n, 'LineNumber', h, { bulkFirst: true, maxPages: 400, meta: m2 });
-                            const all2 = lines.map(mapLine);
-                            if (!m2.truncated) lineSet(division, year, n, all2);
-                            useLines(n, all2);
-                            if (m2.truncated) job.errs.push('entry ' + n + ': Exact paging was cut off');
-                        } catch (e) {
-                            job.errs.push('entry ' + n + ': ' + e.message);
-                        }
-                        const part = buildRows([n], true);
-                        if (part.length) { job.rows = job.rows.concat(part); }
-                    }
-                }
-                const olanes = [];
-                const owide = Math.min(SUM_LANES, orphans.length);
-                for (let i = 0; i < owide; i++) { olanes.push(orphanLane()); }
-                await Promise.all(olanes);
-            } catch (e) {
-                job.err = e;
-            }
-            job.done = true;
-        })();
-        return job;
-    }
-    
-    router.get('/api/accrued/summary', async function (req, res) {
-        const h = headers();
-        if (!h) return res.status(401).json({ error: 'Not authenticated' });
-        const division = req.query.division ? String(req.query.division) : null;
-        const code = req.query.code ? String(req.query.code).trim() : '272200';
-        const year = req.query.year ? parseInt(String(req.query.year), 10) : null;
-        if (!division) return res.status(400).json({ error: 'division is required' });
-        if (!year) return res.status(400).json({ error: 'year is required' });
-        const fresh = String(req.query.fresh || '') === '1';
-        const ckey = 'sum|' + division + '|' + year + '|' + code;
-        const hit = cacheGet(ckey, fresh);
-        if (hit) return res.json(hit);
-        let job = SUMJOBS.get(ckey);
-        if (fresh && job && job.done) { SUMJOBS.delete(ckey); job = null; }
-        if (!job) { job = startSummaryJob(ckey, division, year, code, h); }
-        // The request waits a short while and then answers with whatever is read by
-        // then, together with how far the job is. The dashboard paints that and asks
-        // again a few seconds later, so the table grows instead of staying empty.
-        const until = Date.now() + 20000;
-        while (!job.done && Date.now() < until) { await sleep(300); }
-        if (job.done && job.err) {
-            SUMJOBS.delete(ckey);
-            const e = job.err;
-            const status = (e.response && e.response.status) || 500;
-            const rl = askedTooMuch(e);
-            return res.status(status === 401 ? 401 : (rl ? 429 : 500)).json({
-                error: rl || 'Failed to load accrued summary',
-                detail: e.message,
-                status: status
+  // One entity, one financial year, one accrual account: this is the whole read.
+  // It is kept in one function so the route, a Refresh and anything that wants to
+  // warm the numbers all walk exactly the same way through Exact Online.
+  async function summaryPayload(division, year, code, h, fresh) {
+    const ckey = 'sum|' + division + '|' + year + '|' + code;
+    const hit = cacheGet(ckey, fresh);
+    if (hit) { return hit; }
+    if (fresh) { lineDrop(division, year); }
+    const baseMeta = {};
+    const base = await accrualLines(division, year, code, h, baseMeta);
+            const want = {};
+            const nums = [];
+            base.forEach(function (l) {
+                const k = String(l.entryNumber);
+                if (!k) return;
+                if (!want[k]) { want[k] = 1; nums.push(k); }
             });
-        }
-        const payload = {
-            division: division,
-            year: year,
-            code: code,
-            entries: job.entries,
-            accrualLines: job.accrualLines,
-            accountTotals: job.gross,
-            rows: job.rows.slice(),
-            chunkErrors: job.errs.slice(),
-            lastUpdated: new Date().toISOString()
-        };
-        if (!job.done) {
-            payload.partial = true;
-            payload.loading = { done: job.ready, total: job.entries, rows: payload.rows.length };
-            return res.json(payload);
-        }
-        SUMJOBS.delete(ckey);
-        return sendCached(res, ckey, payload);
+            const counter = {};
+            const errs = [];
+            if (baseMeta.truncated) errs.push('accrual lines: Exact paging was cut off, the year is incomplete');
+            // An entry whose lines are known is marked, so the second pass below can tell
+            // a real bookkeeping gap from an entry that was simply never read.
+            const done = {};
+            function useLines(n, all) {
+                done[n] = 1;
+                const keep = all.filter(function (l) { return l.glCode !== code; });
+                if (keep.length) { counter[n] = keep; } else { delete counter[n]; }
+            }
+            async function grab(list) {
+                if (!list.length) return;
+                const need = list.filter(function (n) {
+                    const c = lineGet(division, year, n);
+                    if (!c) return true;
+                    useLines(n, c);
+                    return false;
+                });
+                if (!need.length) return;
+                list = need;
+                const f = 'FinancialYear eq ' + year + ' and (' + list.map(function (n) { return 'EntryNumber eq ' + n; }).join(' or ') + ')';
+                const meta = {};
+                try {
+                    const lines = await fetchLines(division, f, 'EntryNumber', h, { bulkFirst: true, maxPages: 400, meta: meta });
+                    const byEntry = {};
+                    lines.map(mapLine).forEach(function (l) {
+                        const k = String(l.entryNumber);
+                        if (!want[k]) return;
+                        if (!byEntry[k]) byEntry[k] = [];
+                        byEntry[k].push(l);
+                    });
+                    if (!meta.truncated) {
+                        list.forEach(function (n) { lineSet(division, year, n, byEntry[n] || []); });
+                    }
+                    list.forEach(function (n) { useLines(n, byEntry[n] || []); });
+                    if (meta.truncated && list.length > 1) {
+                        // Half of a journal entry is worse than no answer, so the block is
+                        // thrown away and asked again in smaller pieces.
+                        list.forEach(function (n) { delete counter[n]; delete done[n]; });
+                        const half2 = Math.ceil(list.length / 2);
+                        await grab(list.slice(0, half2));
+                        await grab(list.slice(half2));
+                    } else if (meta.truncated) {
+                        errs.push('entry ' + list[0] + ': Exact paging was cut off');
+                    }
+                } catch (e) {
+                    if (list.length > 1) {
+                        const half = Math.ceil(list.length / 2);
+                        await grab(list.slice(0, half));
+                        await grab(list.slice(half));
+                    } else {
+                        errs.push('entries ' + list[0] + ' - ' + list[list.length - 1] + ': ' + e.message);
+                    }
+                }
+            }
+            // Sixty entries per request keeps the number of calls to Exact low, and the
+            // split on truncation above still guarantees a whole entry is never half read.
+    // Sixty entries fit in one question and a bulk page holds a thousand lines, so
+    // a few of those questions are asked next to each other. The rate limiter above
+    // still decides how fast they may leave, so Exact is never flooded.
+    const batches = [];
+    for (let i = 0; i < nums.length; i += 60) { batches.push(nums.slice(i, i + 60)); }
+    let bnext = 0;
+    async function bLane() {
+      while (bnext < batches.length) {
+        const bb = batches[bnext];
+        bnext = bnext + 1;
+        await grab(bb);
+        await sleep(60);
+      }
+    }
+    const blanes = [];
+    for (let q = 0; q < 3 && q < batches.length; q++) { blanes.push(bLane()); }
+    await Promise.all(blanes);
+            // Second pass: an entry that still has no counter line is asked on its own, so a
+            // paging problem can never be shown as if the bookkeeping were incomplete.
+            const orphans = nums.filter(function (n) { return (!counter[n] || !counter[n].length) && !done[n]; });
+            for (let i = 0; i < orphans.length; i++) {
+                const m2 = {};
+                try {
+                    const lines = await fetchLines(division, 'FinancialYear eq ' + year + ' and EntryNumber eq ' + orphans[i], 'LineNumber', h, { bulkFirst: true, maxPages: 400, meta: m2 });
+                    const all2 = lines.map(mapLine);
+                    if (!m2.truncated) lineSet(division, year, orphans[i], all2);
+                    useLines(orphans[i], all2);
+                    if (m2.truncated) errs.push('entry ' + orphans[i] + ': Exact paging was cut off');
+                } catch (e) {
+                    errs.push('entry ' + orphans[i] + ': ' + e.message);
+                }
+                await sleep(120);
+            }
+
+            // The line on the accrual account itself is the truth: cost centre, period and
+            // amount are taken from it, so every cell of the dashboard ties back to the G/L
+            // account in Exact Online. The counter lines of the same entry only give the name
+            // of the expense account. A single journal entry can carry many accruals for
+            // different cost centres and periods, so the counter lines are matched on
+            // cost centre + period first, then cost centre, then period, and only after that
+            // spread pro rata over the remaining lines of the entry.
+            function pick(list, cc, per) {
+                const live = list.filter(function (l) { return Math.abs(l.amount) > 0.000001; });
+                let s = live.filter(function (l) { return (l.costCenter || '') === cc && String(l.period) === String(per); });
+                if (s.length) return s;
+                s = live.filter(function (l) { return (l.costCenter || '') === cc; });
+                if (s.length) return s;
+                s = live.filter(function (l) { return String(l.period) === String(per); });
+                if (s.length) return s;
+                return live;
+            }
+            const rows = [];
+            base.forEach(function (acc) {
+                const target = -acc.amount;
+                const cc = acc.costCenter || '';
+                const sel = pick(counter[String(acc.entryNumber)] || [], cc, acc.period);
+                if (!sel.length) {
+                    rows.push({
+                        entryNumber: acc.entryNumber, entryId: acc.entryId, date: acc.date,
+                        year: acc.year, period: acc.period, glCode: '', glDescription: '',
+                        noCounter: true,
+                        costCenter: cc, costCenterName: acc.costCenterName,
+                        description: acc.description,
+                        debit: target > 0 ? target : 0, credit: target < 0 ? -target : 0, amount: target
+                    });
+                    return;
+                }
+                const tot = sel.reduce(function (s, l) { return s + Math.abs(l.amount); }, 0);
+                let used = 0;
+                sel.forEach(function (l, i) {
+                    const v = (i === sel.length - 1)
+                        ? Math.round((target - used) * 100) / 100
+                        : Math.round(target * Math.abs(l.amount) / tot * 100) / 100;
+                    used = Math.round((used + v) * 100) / 100;
+                    if (Math.abs(v) < 0.000001 && sel.length > 1) return;
+                    rows.push({
+                        entryNumber: acc.entryNumber, entryId: acc.entryId, date: acc.date,
+                        year: acc.year, period: acc.period,
+                        glCode: l.glCode, glDescription: l.glDescription,
+                        costCenter: cc, costCenterName: acc.costCenterName || l.costCenterName,
+                        description: l.description || acc.description,
+                        debit: v > 0 ? v : 0, credit: v < 0 ? -v : 0, amount: v
+                    });
+                });
+            });
+            // One accrual can be spread over several counter accounts, so the pieces are
+            // added up again per entry, cost centre, period and G/L account. This only
+            // shortens the list, the amounts stay exactly the same.
+            const agg = {};
+            const order = [];
+            rows.forEach(function (r) {
+                const k = r.entryNumber + '|' + r.costCenter + '|' + r.year + '|' + r.period + '|' + r.glCode;
+                if (!agg[k]) { agg[k] = r; order.push(k); return; }
+                const t = agg[k];
+                t.amount = Math.round((t.amount + r.amount) * 100) / 100;
+                t.debit = t.amount > 0 ? t.amount : 0;
+                t.credit = t.amount < 0 ? -t.amount : 0;
+            });
+            const outRows = order.map(function (k) { return agg[k]; }).filter(function (r) { return Math.abs(r.amount) > 0.000001; });
+    return cacheSet(ckey, {
+      division: division,
+      year: year,
+      code: code,
+      entries: nums.length,
+      accrualLines: base.length,
+      accountTotals: totalsOf(base),
+      rows: outRows,
+      chunkErrors: errs,
+      lastUpdated: new Date().toISOString()
     });
+  }
+
+  router.get('/api/accrued/summary', async function (req, res) {
+    const h = headers();
+    if (!h) return res.status(401).json({ error: 'Not authenticated' });
+    const division = req.query.division ? String(req.query.division) : null;
+    const code = req.query.code ? String(req.query.code).trim() : '272200';
+    const year = req.query.year ? parseInt(String(req.query.year), 10) : null;
+    if (!division) return res.status(400).json({ error: 'division is required' });
+    if (!year) return res.status(400).json({ error: 'year is required' });
+    const fresh = String(req.query.fresh || '') === '1';
+    try {
+      const data = await summaryPayload(division, year, code, h, fresh);
+      return res.json(data);
+    } catch (e) {
+      const status = (e.response && e.response.status) || (e.blocked ? 429 : 500);
+      const rl = askedTooMuch(e) || (e.blocked ? e.message : null);
+      return res.status(status === 401 ? 401 : (rl ? 429 : 500)).json({
+        error: rl || 'Failed to load accrued summary',
+        detail: e.message,
+        status: status
+      });
+    }
+  });
+
+  // Diagnostic: what one read of an entity really costs at Exact Online.
+  router.get('/api/accrued/diag', async function (req, res) {
+    const h = headers();
+    if (!h) return res.status(401).json({ error: 'Not authenticated' });
+    const division = req.query.division ? String(req.query.division) : null;
+    const year = req.query.year ? parseInt(String(req.query.year), 10) : 2026;
+    const code = req.query.code ? String(req.query.code).trim() : '272200';
+    if (!division) return res.status(400).json({ error: 'division is required' });
+    const started = Date.now();
+    const meta = {};
+    try {
+      const base = await accrualLines(division, year, code, h, meta);
+      const seen = {};
+      base.forEach(function (l) { seen[String(l.entryNumber)] = 1; });
+      return res.json({
+        division: division, year: year, code: code,
+        accrualLines: base.length, entries: Object.keys(seen).length,
+        pages: meta.pages || 0, truncated: !!meta.truncated,
+        ms: Date.now() - started,
+        variants: VARIANT,
+        callsThisMinute: (RATE[division] || []).length,
+        blocked: blockNote(division)
+      });
+    } catch (e) {
+      return res.status(500).json({ error: e.message, refused: askedTooMuch(e) || blockNote(division), ms: Date.now() - started });
+    }
+  });
 
     router.get('/api/accrued/entry', async function (req, res) {
         const h = headers();
