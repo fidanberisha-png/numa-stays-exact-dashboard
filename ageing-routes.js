@@ -9,7 +9,7 @@ const BASE = 'https://start.exactonline.' + REGION + '/api/v1';
 const AP_SOURCES = ['read/financial/PayablesList', 'read/financial/AgingPayablesList'];
 // The A/P report is cut in the same ranges as Exact shows them, the A/R report
 // keeps the four ranges it had. Only these two payable accounts are wanted.
-const AP_EDGES = [31, 61, 92, 180, 364, 730];
+const AP_EDGES = [30, 60, 90, 180, 365, 730];
 const AR_EDGES = [30, 60, 90];
 // AP accounts are matched by their DESCRIPTION, not by GL number, because
   // different entities use different numbers for the same-named account.
@@ -418,11 +418,11 @@ module.exports = function (getToken) {
     if (hit && (Date.now() - hit.at) < GL_TTL_MS) { return hit; }
     const info = { at: Date.now(), accounts: [], byJournal: {}, fallback: null };
     try {
-      const accs = await fetchAll(division, 'financial/GLAccounts?$select=Code,Description,Type&$filter=Type eq ' + AP_GL_TYPE, h, 10, 25000);
+      const accs = await fetchAll(division, 'financial/GLAccounts?$select=ID,Code,Description,Type&$filter=Type eq ' + AP_GL_TYPE, h, 10, 25000);
       accs.forEach(function (a) {
         const code = String(a.Code === undefined || a.Code === null ? '' : a.Code).trim();
         const desc = String(a.Description || '').trim();
-        if (code || desc) { info.accounts.push({ code: code, description: desc || ('G/L ' + code) }); }
+        if (code || desc) { info.accounts.push({ code: code, description: desc || ('G/L ' + code), id: String(a.ID || '').trim() }); }
       });
     } catch (e) { /* the picker simply stays empty for this entity */ }
     try {
@@ -447,12 +447,157 @@ module.exports = function (getToken) {
   }
   function glOfRow(row, info) {
     if (!info) { return null; }
+    const rowDesc = glText(row);
+    if (rowDesc) { return { code: glCode(row) || '', description: rowDesc }; }
     const jc = String(row.JournalCode === undefined || row.JournalCode === null ? '' : row.JournalCode).trim();
     if (jc && info.byJournal[jc]) { return info.byJournal[jc]; }
     const desc = glText(row);
     if (desc) { return { code: glCode(row) || '', description: desc }; }
     return info.fallback;
   }
+  // ---- A/P read straight from the payable G/L accounts --------------------
+  // Exact Online does not put the G/L account on an open item of PayablesList,
+  // and that list knows only the position of today. The ageing screen of Exact
+  // works on the transaction lines of the payable accounts instead: every line
+  // with a date up to the reference date counts, the lines that carry the same
+  // invoice number are taken together, and whatever is left over is the open
+  // item on that date. That is what is rebuilt here, line for line, so the
+  // Outstanding of the dashboard is the Outstanding of Exact - the same G/L
+  // account, the same reference date, nothing recalculated.
+  const AP_LINE_SELECT = 'AccountCode,AccountName,AmountDC,Date,DueDate,EntryNumber,InvoiceNumber,GLAccountCode,GLAccountDescription,JournalCode,Type,Description,YourRef';
+  function apLinePath(ids) {
+    const f = ids.map(function (id) { return "GLAccount eq guid'" + id + "'"; }).join(' or ');
+    return 'bulk/Financial/TransactionLines?$filter=(' + f + ')&$select=' + AP_LINE_SELECT;
+  }
+  // One invoice number is one open item: the invoice and every payment or
+  // credit booked against it are added up. A line without an invoice number
+  // stands on its own, exactly as Exact shows it.
+  const AP_INVOICE_TYPES = { 10: 1, 20: 1, 21: 1, 30: 1, 31: 1, 82: 1, 90: 1 };
+  function apItemKey(row, i) {
+    const inv = (row.InvoiceNumber === undefined || row.InvoiceNumber === null) ? '' : String(row.InvoiceNumber).trim();
+    const gl = String(glCode(row) || '');
+    const acc = (row.AccountCode === undefined || row.AccountCode === null) ? '' : String(row.AccountCode).trim();
+    if (inv && inv !== '0') { return gl + '|' + acc + '|I' + inv; }
+    return gl + '|' + acc + '|L' + String(row.EntryNumber || '') + '#' + i;
+  }
+  function openItemsAt(lines, refDate) {
+    const cut = (refDate && !isNaN(refDate.getTime())) ? refDate.getTime() : Date.now();
+    const groups = {};
+    const order = [];
+    for (let i = 0; i < lines.length; i++) {
+      const row = lines[i];
+      const d = toDate(row.Date);
+      if (d && d.getTime() > cut) { continue; }
+      const k = apItemKey(row, i);
+      if (!groups[k]) { groups[k] = { rows: [], sum: 0 }; order.push(k); }
+      // Exact books a payable as a credit. The ageing screen shows what is owed,
+      // so only the sign is turned around, never the amount itself.
+      groups[k].sum = groups[k].sum - num(row.AmountDC);
+      groups[k].rows.push(row);
+    }
+    const out = [];
+    for (let j = 0; j < order.length; j++) {
+      const g = groups[order[j]];
+      const amount = Math.round(g.sum * 100) / 100;
+      if (!amount) { continue; }
+      let anchor = g.rows[0];
+      let best = -1;
+      for (let r = 0; r < g.rows.length; r++) {
+        const row = g.rows[r];
+        const inv = String(row.InvoiceNumber === undefined || row.InvoiceNumber === null ? '' : row.InvoiceNumber).trim();
+        const ent = String(row.EntryNumber === undefined || row.EntryNumber === null ? '' : row.EntryNumber).trim();
+        let score = 0;
+        if (inv && inv === ent) { score = score + 4; }
+        if (AP_INVOICE_TYPES[Number(row.Type)]) { score = score + 2; }
+        const dt = toDate(row.Date);
+        const at = toDate(anchor.Date);
+        const older = dt && at && dt.getTime() < at.getTime();
+        if (score > best || (score === best && older)) { best = score; anchor = row; }
+      }
+      out.push({
+        AccountCode: (anchor.AccountCode === undefined || anchor.AccountCode === null) ? '' : String(anchor.AccountCode).trim(),
+        AccountName: anchor.AccountName || '',
+        Amount: amount,
+        InvoiceDate: anchor.Date,
+        Date: anchor.Date,
+        DueDate: anchor.DueDate || anchor.Date,
+        InvoiceNumber: String(anchor.InvoiceNumber || anchor.EntryNumber || ''),
+        EntryNumber: String(anchor.EntryNumber || ''),
+        Description: anchor.Description || '',
+        YourRef: anchor.YourRef || '',
+        JournalCode: anchor.JournalCode || '',
+        GLAccountCode: anchor.GLAccountCode || '',
+        GLAccountDescription: anchor.GLAccountDescription || ''
+      });
+    }
+    return out;
+  }
+  // A part of the lines is never turned into figures: half of the lines of one
+  // invoice would look like an open item that is not there. As long as the
+  // reading is not finished the entity is reported as still coming.
+  async function fetchApItemsFor(division, h, errors, waitMs, refDate) {
+    let gi = null;
+    try { gi = await apGlInfo(division, h); } catch (e) { gi = null; }
+    const ids = (gi && gi.accounts ? gi.accounts : []).map(function (a) { return a.id; }).filter(function (x) { return x; });
+    if (ids.length) {
+      try {
+        const lines = await fetchAll(division, apLinePath(ids), h, 300, waitMs);
+        if (lines.incomplete) { return { rows: null, source: null, loading: lines.incomplete, gi: gi }; }
+        const items = openItemsAt(lines, refDate);
+        return { rows: items, source: 'payable G/L transaction lines', loading: null, gi: gi };
+      } catch (e) {
+        if (e && (e.loading || e.blocked)) { return { rows: null, source: null, loading: e.loading || { pages: 0, rows: 0 }, gi: gi }; }
+        errors[division + ':payable lines'] = e.response && e.response.data ? e.response.data : e.message;
+      }
+    }
+    const back = await fetchRowsFor(division, AP_SOURCES, h, errors, waitMs);
+    back.gi = gi;
+    return back;
+  }
+  // Diagnostic: the A/P position of one entity, read from the payable G/L
+  // accounts, so it can be held next to the ageing screen of Exact Online.
+  router.get('/api/ap-diag', async function (req, res) {
+    const h = headers();
+    if (!h) return res.status(401).json({ error: 'Not authenticated' });
+    const division = req.query.division ? String(req.query.division) : null;
+    if (!division) return res.status(400).json({ error: 'division is required' });
+    const refDate = req.query.date ? new Date(req.query.date) : new Date();
+    const referTo = req.query.referTo === 'duedate' ? 'duedate' : 'date';
+    const want = req.query.gl ? String(req.query.gl).split('|').map(function (x) { return x.trim(); }).filter(function (x) { return x !== ''; }) : [];
+    const t0 = Date.now();
+    try {
+      const gi = await apGlInfo(division, h);
+      const ids = gi.accounts.map(function (a) { return a.id; }).filter(function (x) { return x; });
+      const lines = await fetchAll(division, apLinePath(ids), h, 300, 240000);
+      const items = openItemsAt(lines, refDate);
+      const per = {};
+      const byGl = {};
+      let total = 0;
+      items.forEach(function (it) {
+        const gd = String(it.GLAccountDescription || '');
+        if (want.length) {
+          let ok = false;
+          for (let i = 0; i < want.length; i++) { if (norm(want[i]) === norm(gd) || String(want[i]) === String(it.GLAccountCode)) { ok = true; } }
+          if (!ok) { return; }
+        }
+        if (!byGl[gd]) { byGl[gd] = { items: 0, total: 0 }; }
+        byGl[gd].items = byGl[gd].items + 1;
+        byGl[gd].total = Math.round((byGl[gd].total + it.Amount) * 100) / 100;
+        const k = it.AccountCode + '|' + it.AccountName;
+        if (!per[k]) { per[k] = { code: it.AccountCode, name: it.AccountName, items: 0, total: 0, b: [0, 0, 0, 0] }; }
+        per[k].items = per[k].items + 1;
+        per[k].total = Math.round((per[k].total + it.Amount) * 100) / 100;
+        const age = ageOf(it, referTo, refDate);
+        const bi = age <= 30 ? 0 : (age <= 60 ? 1 : (age <= 90 ? 2 : 3));
+        per[k].b[bi] = Math.round((per[k].b[bi] + it.Amount) * 100) / 100;
+        total = total + it.Amount;
+      });
+      const list = Object.keys(per).map(function (k) { return per[k]; }).sort(function (a, b) { return a.total - b.total; });
+      res.json({ division: division, referenceDate: iso(refDate), referTo: referTo, ms: Date.now() - t0, glAccounts: gi.accounts, lines: lines.length, incomplete: lines.incomplete || null, openItems: items.length, byGl: byGl, suppliers: list.length, total: Math.round(total * 100) / 100, list: list });
+    } catch (e) {
+      res.status(502).json({ error: e.message, blocked: !!e.blocked, loading: e.loading || null, ms: Date.now() - t0 });
+    }
+  });
   router.get('/api/divisions', async function (req, res) {
     const h = headers();
     if (!h) return res.status(401).json({ error: 'Not authenticated' });
@@ -526,7 +671,7 @@ module.exports = function (getToken) {
       });
     }
       const left = Math.max(1500, budgetUntil - Date.now());
-      const r = await fetchRowsFor(targets[i], sources, h, out.errors, left);
+      const r = cfg.fromLines ? await fetchApItemsFor(targets[i], h, out.errors, left, refDate) : await fetchRowsFor(targets[i], sources, h, out.errors, left);
       if (r.loading) {
         if (!waiting) { waiting = { pages: 0, rows: 0, entities: 0 }; }
         waiting.pages += r.loading.pages; waiting.rows += r.loading.rows; waiting.entities += 1;
@@ -567,7 +712,7 @@ module.exports = function (getToken) {
   }
   return res.status(502).json({ error: 'no source worked', errors: errors });
   });
-  router.get('/api/ageing-ap', function (req, res) { return handleAgeing(req, res, { sources: AP_SOURCES, edges: AP_EDGES, gl: [], withGl: true }); });
+  router.get('/api/ageing-ap', function (req, res) { return handleAgeing(req, res, { sources: AP_SOURCES, edges: AP_EDGES, gl: [], withGl: true, fromLines: true }); });
   router.get('/api/ageing-ar', function (req, res) { return handleAgeing(req, res, { sources: AR_SOURCES, edges: AR_EDGES, gl: [] }); });
   // ---- Keeping the numbers warm ------------------------------------------
   // Exact Online hands out sixty rows per call and only about sixty calls a
@@ -583,6 +728,15 @@ module.exports = function (getToken) {
   // administration holds many more companies and reading them all would eat the
   // call budget of Exact Online for nothing.
   const WARM_CODES = [3784237, 3745758, 3745759, 3745760, 3745740, 3751399, 3708480, 3642741, 2657065, 3383979, 3693157, 3706020, 3716405, 3741441, 3717706, 3900740, 3725452, 3732987, 3745729];
+  // A/P is kept warm on the transaction lines of the payable accounts,
+  // A/R on its own list of open items.
+  async function warmOne(division, path, h) {
+    if (path !== 'ap-lines') { return await fetchAll(division, path, h, 600, 240000); }
+    const gi = await apGlInfo(division, h);
+    const ids = (gi && gi.accounts ? gi.accounts : []).map(function (a) { return a.id; }).filter(function (x) { return x; });
+    if (!ids.length) { return await fetchAll(division, AP_SOURCES[0], h, 600, 240000); }
+    return await fetchAll(division, apLinePath(ids), h, 300, 240000);
+  }
   let warmRunning = false;
   let warmInfo = { at: null, done: 0, total: 0, ms: 0 };
   async function warmAll() {
@@ -597,7 +751,7 @@ module.exports = function (getToken) {
       if (!wanted.length) { wanted = all; }
       const list = [];
       wanted.forEach(function (d) {
-        list.push({ division: d.code, path: AP_SOURCES[0] });
+        list.push({ division: d.code, path: 'ap-lines' });
         list.push({ division: d.code, path: AR_SOURCES[0] });
       });
       warmInfo = { at: started, done: 0, total: list.length, ms: 0 };
@@ -606,8 +760,8 @@ module.exports = function (getToken) {
         while (next < list.length) {
           const t = list[next];
           next = next + 1;
-        try { await apGlInfo(t.division, h); } catch (e) { }
-          try { await fetchAll(t.division, t.path, h, 600, 240000); }
+        
+          try { await warmOne(t.division, t.path, h); }
           catch (e) { /* the next round tries again */ }
           warmInfo.done = warmInfo.done + 1;
         }
