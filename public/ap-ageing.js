@@ -72,7 +72,7 @@ function load() {
   var div = (S.division || (el('company') ? el('company').value : '') || 'consolidated');
   var endpoint = (S.dashboard === 'ar') ? '/api/ageing-ar' : '/api/ageing-ap';
   var url = endpoint + '?referTo=' + encodeURIComponent(el('referto').value) + '&date=' + encodeURIComponent(el('refdate').value) + '&division=' + encodeURIComponent(div);
-  if (window.NUMA_GLSEL && window.NUMA_GLSEL().length) { url = url + '&gl=' + encodeURIComponent(window.NUMA_GLSEL().join('|')); }
+    if (window.NUMA_GLON && window.NUMA_GLON() && window.NUMA_GLSEL && window.NUMA_GLSEL().length) { url = url + '&gl=' + encodeURIComponent(window.NUMA_GLSEL().join('|')); }
   fetch(url, { credentials: 'same-origin' }).then(function (r) {
     return r.json().then(function (j) { return { ok: r.ok, j: j }; });
   }).then(function (res) {
@@ -453,9 +453,15 @@ setInterval(function () { conn(); load(); }, 7200000);
       }
     }
     if (url.indexOf('/api/divisions') > -1) {
-      return NF.call(window, input, init).then(function (r) { return r.json(); }).then(function (j) {
-        var out = ENT.map(function (m) { return { code: m[2], human: m[1], region: m[0], name: m[3], label: m[1] + ' - ' + m[3], currency: 'EUR' }; });
-        return jr({ current: j && j.current, divisions: out });
+      // The nineteen entities are known here, so the list never has to wait for
+      // Exact Online. The server is still asked which company the token sits in,
+      // but a slow or refused answer may not keep the screen empty.
+      var out = ENT.map(function (m) { return { code: m[2], human: m[1], region: m[0], name: m[3], label: m[1] + ' - ' + m[3], currency: 'EUR' }; });
+      return new Promise(function (resolve) {
+        var settled = false;
+        function finish(cur) { if (settled) { return; } settled = true; resolve(jr({ current: cur, divisions: out })); }
+        setTimeout(function () { finish(null); }, 2500);
+        NF.call(window, input, init).then(function (r) { return r.json(); }).then(function (j) { finish(j && j.current); }).catch(function () { finish(null); });
       });
     }
     if (url.indexOf('/api/ageing-') > -1 && (url.indexOf('division=selected') > -1 || url.indexOf('division=consolidated') > -1)) {
@@ -595,7 +601,13 @@ setInterval(function () { conn(); load(); }, 7200000);
     try { var v = JSON.parse(localStorage.getItem(GLKEY) || '[]'); return Array.isArray(v) ? v : []; } catch (e) { return []; }
   }
   function setGlSel(list) { try { localStorage.setItem(GLKEY, JSON.stringify(list)); } catch (e) { } }
-  function glQ() { var s = glSel(); return s.length ? ('&gl=' + encodeURIComponent(s.join('|'))) : ''; }
+  // The tick list belongs to A/P only. A/R and InterCompany read other accounts,
+  // so their questions never carry a payable G/L choice with them.
+  function glOn() {
+    try { return String((document.getElementById('dashboard') || {}).value || '') === 'ap'; } catch (e) { return false; }
+  }
+  window.NUMA_GLON = glOn;
+  function glQ() { if (!glOn()) { return ''; } var s = glSel(); return s.length ? ('&gl=' + encodeURIComponent(s.join('|'))) : ''; }
   window.NUMA_GLSEL = glSel;
   function glAddOptions(list) {
     glScopeCheck();
