@@ -363,12 +363,12 @@ module.exports = function (getToken) {
   // falls back to the payable account of the purchase journals that are used
   // the most, which is the default creditor account of the entity.
   const AP_GL_TYPE = 22;
-  const GL_TTL_MS = 6 * 60 * 60 * 1000;
+  const GL_TTL_MS = 24 * 60 * 60 * 1000;
   const glInfoCache = {};
   async function apGlInfo(division, h) {
     const hit = glInfoCache[division];
     if (hit && (Date.now() - hit.at) < GL_TTL_MS) { return hit; }
-    const info = { at: Date.now(), accounts: [], byJournal: {}, fallback: null };
+    const info = { at: Date.now(), accounts: [], byJournal: {}, fallback: null, byEntry: {}, entryTried: {}, resolving: 0 };
     try {
       const accs = await fetchAll(division, 'financial/GLAccounts?$select=Code,Description,Type&$filter=Type eq ' + AP_GL_TYPE, h, 10, 25000);
       accs.forEach(function (a) {
@@ -399,11 +399,130 @@ module.exports = function (getToken) {
   }
   function glOfRow(row, info) {
     if (!info) { return null; }
+    // The journal entry itself is the truth, so it comes first.
+    const en = String(row.EntryNumber === undefined || row.EntryNumber === null ? '' : row.EntryNumber).trim();
+    if (en && info.byEntry[en]) { return info.byEntry[en]; }
     const jc = String(row.JournalCode === undefined || row.JournalCode === null ? '' : row.JournalCode).trim();
     if (jc && info.byJournal[jc]) { return info.byJournal[jc]; }
     const desc = glText(row);
     if (desc) { return { code: glCode(row) || '', description: desc }; }
-    return info.fallback;
+    // No silent fallback any more. An item booked through a bank or a general
+    // journal used to be counted on the busiest purchase account, which tore
+    // invoices and their payments apart: picking one G/L account then showed the
+    // payments without their invoices and the report went negative. Such an item
+    // is shown as not linked until the lookup below has found its real account.
+    return null;
+  }
+  // ---- The real payable G/L account of an open item ----------------------
+  // The open item list of Exact carries no G/L account, only the journal and the
+  // entry number. For an item that did not come from a purchase journal the
+  // journal entry is read and the line that sits on a payable account of this
+  // entity is taken, which is the account Exact really books the item on.
+  const ENTRY_CHUNK = 40;
+  const ENTRY_MAX = 8000;
+  const entryRunning = {};
+  function yearOfRow(row) {
+    const d = toDate(row.InvoiceDate) || toDate(row.Date) || toDate(row.DueDate);
+    return d ? d.getFullYear() : 0;
+  }
+  async function readLines(division, path, h) {
+    let url = BASE + '/' + division + '/' + path;
+    let rows = [];
+    let pages = 0;
+    while (url && pages < 20) {
+      const r = await getEx(url, function () { return headers() || h; });
+      const d = r.data && r.data.d ? r.data.d : r.data;
+      const part = d && d.results ? d.results : (Array.isArray(d) ? d : []);
+      rows = rows.concat(part);
+      url = d && d.__next ? d.__next : null;
+      pages = pages + 1;
+    }
+    return rows;
+  }
+  async function resolveEntries(division, info, list, h) {
+    const codes = {};
+    info.accounts.forEach(function (a) { if (a.code) { codes[String(a.code)] = a.description; } });
+    const byYear = {};
+    list.forEach(function (x) { const y = String(x[1] || 0); if (!byYear[y]) { byYear[y] = []; } byYear[y].push(String(x[0])); });
+    const years = Object.keys(byYear);
+    for (let yi = 0; yi < years.length; yi++) {
+      const y = Number(years[yi]) || 0;
+      const all = byYear[years[yi]];
+      for (let i = 0; i < all.length; i += ENTRY_CHUNK) {
+        const part = all.slice(i, i + ENTRY_CHUNK);
+        const inner = '(' + part.map(function (n) { return 'EntryNumber eq ' + n; }).join(' or ') + ')';
+        const sel = '$select=EntryNumber,GLAccountCode,GLAccountDescription';
+        // An invoice of December can be booked in the next financial year, so both
+        // years are asked, and an entry number that turns up twice with two
+        // different accounts is left alone instead of being guessed.
+        const win = y > 0 ? ('(FinancialYear eq ' + y + ' or FinancialYear eq ' + (y + 1) + ') and ' + inner) : inner;
+        const tries = [
+          'bulk/Financial/TransactionLines?' + sel + '&$filter=' + win,
+          'financialtransaction/TransactionLines?' + sel + '&$filter=' + win,
+          'bulk/Financial/TransactionLines?' + sel + '&$filter=' + inner
+        ];
+        let rows = null;
+        for (let t = 0; t < tries.length && !rows; t++) {
+          try { rows = await readLines(division, tries[t], h); }
+          catch (e) { rows = null; }
+        }
+        const found = {};
+        (rows || []).forEach(function (r) {
+          const n = String(r.EntryNumber === undefined || r.EntryNumber === null ? '' : r.EntryNumber).trim();
+          const gc = String(r.GLAccountCode === undefined || r.GLAccountCode === null ? '' : r.GLAccountCode).trim();
+          if (!n || !gc || codes[gc] === undefined) { return; }
+          if (found[n] && found[n] !== gc) { found[n] = '?'; return; }
+          found[n] = gc;
+        });
+        part.forEach(function (n) {
+          info.entryTried[n] = 1;
+          const gc = found[n];
+          if (gc && gc !== '?') { info.byEntry[n] = { code: gc, description: codes[gc] || ('G/L ' + gc) }; }
+        });
+        info.resolving = Math.max(0, (info.resolving || 0) - part.length);
+      }
+    }
+    info.resolving = 0;
+  }
+  function pendingEntries(info, rows) {
+    const want = [];
+    const seen = {};
+    for (let i = 0; i < rows.length; i++) {
+      const row = rows[i];
+      const jc = String(row.JournalCode === undefined || row.JournalCode === null ? '' : row.JournalCode).trim();
+      if (jc && info.byJournal[jc]) { continue; }
+      const en = String(row.EntryNumber === undefined || row.EntryNumber === null ? '' : row.EntryNumber).trim();
+      if (!en || en === '0' || !/^[0-9]+$/.test(en)) { continue; }
+      if (info.byEntry[en] || info.entryTried[en] || seen[en]) { continue; }
+      seen[en] = 1;
+      want.push([en, yearOfRow(row)]);
+      if (want.length >= ENTRY_MAX) { break; }
+    }
+    return want;
+  }
+  // Started next to the report, never in front of it: the screen shows what is
+  // known and asks again a few seconds later, so nothing waits on this.
+  function queueEntryGl(division, info, rows, h) {
+    if (!info || !rows || !rows.length || entryRunning[division]) { return; }
+    const want = pendingEntries(info, rows);
+    if (!want.length) { return; }
+    entryRunning[division] = 1;
+    info.resolving = want.length;
+    (async function () {
+      try { await resolveEntries(division, info, want, h); }
+      catch (e) { info.resolving = 0; }
+      entryRunning[division] = 0;
+    })();
+  }
+  async function resolveFromRows(division, info, rows, h) {
+    if (!info || !rows || !rows.length || entryRunning[division]) { return; }
+    const want = pendingEntries(info, rows);
+    if (!want.length) { return; }
+    entryRunning[division] = 1;
+    info.resolving = want.length;
+    try { await resolveEntries(division, info, want, h); }
+    catch (e) { info.resolving = 0; }
+    entryRunning[division] = 0;
   }
   router.get('/api/divisions', async function (req, res) {
     const h = headers();
@@ -467,25 +586,50 @@ module.exports = function (getToken) {
     // reading in the background and the dashboard asks again a few seconds later.
     const budgetUntil = Date.now() + 40000;
     let waiting = null;
-    for (let i = 0; i < targets.length; i++) {
-      const cur = await divisionCurrency(targets[i], h);
-    const gi = cfg.withGl ? await apGlInfo(targets[i], h) : null;
-    if (gi) {
-      gi.accounts.forEach(function (a) {
-        const k = norm(a.description);
-        if (!glOptMap[k]) { glOptMap[k] = { description: a.description, codes: [] }; }
-        if (a.code && glOptMap[k].codes.indexOf(a.code) < 0) { glOptMap[k].codes.push(a.code); }
-      });
-    }
-      const left = Math.max(1500, budgetUntil - Date.now());
-      const r = await fetchRowsFor(targets[i], sources, h, out.errors, left);
-      if (r.loading) {
-        if (!waiting) { waiting = { pages: 0, rows: 0, entities: 0 }; }
-        waiting.pages += r.loading.pages; waiting.rows += r.loading.rows; waiting.entities += 1;
+    // Exact Online counts its minute limit per division, so the entities are read
+    // next to each other instead of one after the other. Nineteen entities in a
+    // row used to eat the whole time budget and the last ones never made it into
+    // the answer.
+    let resolvingLeft = 0;
+    let nextTarget = 0;
+    async function readTarget() {
+      for (;;) {
+        const i = nextTarget++;
+        if (i >= targets.length) { return; }
+        const cur = await divisionCurrency(targets[i], h);
+        const gi = cfg.withGl ? await apGlInfo(targets[i], h) : null;
+        if (gi) {
+          gi.accounts.forEach(function (a) {
+            const k = norm(a.description);
+            if (!glOptMap[k]) { glOptMap[k] = { description: a.description, codes: [] }; }
+            if (a.code && glOptMap[k].codes.indexOf(a.code) < 0) { glOptMap[k].codes.push(a.code); }
+          });
+        }
+        const left = Math.max(1500, budgetUntil - Date.now());
+        const r = await fetchRowsFor(targets[i], sources, h, out.errors, left);
+        if (r.loading) {
+          if (!waiting) { waiting = { pages: 0, rows: 0, entities: 0 }; }
+          waiting.pages += r.loading.pages; waiting.rows += r.loading.rows; waiting.entities += 1;
+        }
+        if (r.rows) {
+          gotAny = true; if (!out.source) out.source = r.source; totalRows += r.rows.length;
+          if (gi) { queueEntryGl(targets[i], gi, r.rows, h); }
+          accumulate(map, r.rows, referTo, refDate, cur, rates, edges, allowList, stats, targets[i], gi, glStats);
+        }
+        if (gi && gi.resolving) { resolvingLeft += gi.resolving; }
       }
-      if (r.rows) { gotAny = true; if (!out.source) out.source = r.source; totalRows += r.rows.length; accumulate(map, r.rows, referTo, refDate, cur, rates, edges, allowList, stats, targets[i], gi, glStats); }
     }
+    const readers = [];
+    const wideRead = Math.min(8, targets.length);
+    for (let i = 0; i < wideRead; i++) { readers.push(readTarget()); }
+    await Promise.all(readers);
     if (waiting) { out.loading = waiting; }
+    // While the payable G/L accounts of the open items are still being looked up
+    // the dashboard is told to come back, so the numbers complete themselves.
+    if (resolvingLeft) {
+      out.resolving = resolvingLeft;
+      if (!out.loading) { out.loading = { pages: 0, rows: totalRows, entities: 0, resolving: resolvingLeft }; }
+    }
     if (!gotAny) {
       if (waiting) { return res.status(202).json(out); }
       return res.status(502).json(out);
@@ -558,9 +702,15 @@ module.exports = function (getToken) {
         while (next < list.length) {
           const t = list[next];
           next = next + 1;
-        try { await apGlInfo(t.division, h); } catch (e) { }
-          try { await fetchAll(t.division, t.path, h, 600, 240000); }
-          catch (e) { /* the next round tries again */ }
+        let gi0 = null;
+        try { gi0 = await apGlInfo(t.division, h); } catch (e) { gi0 = null; }
+        // The real payable G/L account of every open item is resolved here, in the
+        // background, so a dashboard opened later already has it.
+        try {
+          const wrows = await fetchAll(t.division, t.path, h, 600, 240000);
+          if (gi0 && t.path === AP_SOURCES[0] && wrows && wrows.length) { await resolveFromRows(t.division, gi0, wrows, h); }
+        }
+        catch (e) { /* the next round tries again */ }
           warmInfo.done = warmInfo.done + 1;
         }
       }
