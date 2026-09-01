@@ -124,7 +124,7 @@ module.exports = function (getToken) {
       // Work that only fills the picture in, like looking up the payable G/L
       // account of an open item, may use no more than a third of the minute, so
       // a report on the screen is never left waiting behind it.
-      const cap = soft ? Math.ceil(MAX_PER_MIN / 2) : MAX_PER_MIN;
+      const cap = soft ? Math.ceil(MAX_PER_MIN / 5) : MAX_PER_MIN;
       if (log.length < cap) { log.push(now); return; }
       await sleep(1000);
     }
@@ -181,6 +181,8 @@ module.exports = function (getToken) {
         rowsCache[key] = { at: Date.now(), rows: job.rows, complete: job.complete };
       } catch (e) {
         job.err = e;
+        job.errText = (e.response && e.response.data) ? String(JSON.stringify(e.response.data)).slice(0, 300) : String((e && e.message) || e);
+        try { console.error('numa: read failed', division, path, 'page', job.pages, job.errText); } catch (e2) { }
         // A list that was cut off is kept only as a stopgap, never as the truth.
         if (job.rows.length && !(rowsCache[key] && rowsCache[key].complete)) {
           rowsCache[key] = { at: Date.now(), rows: job.rows, complete: false };
@@ -211,7 +213,7 @@ module.exports = function (getToken) {
     if (job.done && (Date.now() - job.at) > 30000) { startJob(key, division, path, h, maxPages); }
     if (!part.length) {
       const e = new Error('Still reading from Exact Online');
-      e.loading = { pages: job.pages, rows: 0 };
+      e.loading = { pages: job.pages, rows: 0, error: job.errText || null };
       throw e;
     }
     const out = part.slice();
@@ -451,9 +453,9 @@ module.exports = function (getToken) {
   // entry number. For an item that did not come from a purchase journal the
   // journal entry is read and the line that sits on a payable account of this
   // entity is taken, which is the account Exact really books the item on.
-  const ENTRY_CHUNK = 50;
+  const ENTRY_CHUNK = 40;
   const ENTRY_MAX = 30000;
-  const RESOLVE_LANES = 3;
+  const RESOLVE_LANES = 1;
   const entryRunning = {};
   function yearOfRow(row) {
     const d = toDate(row.InvoiceDate) || toDate(row.Date) || toDate(row.DueDate);
@@ -463,7 +465,7 @@ module.exports = function (getToken) {
     let url = BASE + '/' + division + '/' + path;
     let rows = [];
     let pages = 0;
-    while (url && pages < 60) {
+    while (url && pages < 25) {
       const r = await getEx(url, function () { return headers() || h; }, true);
       const d = r.data && r.data.d ? r.data.d : r.data;
       const part = d && d.results ? d.results : (Array.isArray(d) ? d : []);
@@ -549,6 +551,7 @@ module.exports = function (getToken) {
   }
   function pendingEntries(info, rows) {
     const want = [];
+    const later = [];
     const seen = {};
     for (let i = 0; i < rows.length; i++) {
       const row = rows[i];
@@ -561,10 +564,13 @@ module.exports = function (getToken) {
       if (!en || en === '0' || !/^[0-9]+$/.test(en)) { if (info.stat) { info.stat.noEntry = info.stat.noEntry + 1; } continue; }
       if (info.byEntry[en] || info.entryTried[en] || seen[en]) { continue; }
       seen[en] = 1;
-      want.push([en, yearOfRow(row)]);
-      if (want.length >= ENTRY_MAX) { break; }
+      // An item from a purchase journal already carries a provisional account, so
+      // it waits: the items whose journal says nothing are looked up first.
+      const jc2 = String(row.JournalCode === undefined || row.JournalCode === null ? '' : row.JournalCode).trim();
+      if (jc2 && info.byJournal[jc2]) { later.push([en, yearOfRow(row)]); } else { want.push([en, yearOfRow(row)]); }
+      if ((want.length + later.length) >= ENTRY_MAX) { break; }
     }
-    return want;
+    return want.concat(later);
   }
   // Started next to the report, never in front of it: the screen shows what is
   // known and asks again a few seconds later, so nothing waits on this.
@@ -677,6 +683,7 @@ module.exports = function (getToken) {
         const left = Math.max(1500, budgetUntil - Date.now());
         const r = await fetchRowsFor(targets[i], sources, h, out.errors, left);
         if (r.loading) {
+        if (r.loading.error) { out.errors[targets[i] + ':read'] = r.loading.error; }
           if (!waiting) { waiting = { pages: 0, rows: 0, entities: 0 }; }
           waiting.pages += r.loading.pages; waiting.rows += r.loading.rows; waiting.entities += 1;
         }
@@ -728,6 +735,7 @@ module.exports = function (getToken) {
   const fields = rows.length ? Object.keys(rows[0]) : [];
   return res.json({ division: division, source: sources[i], count: rows.length, fields: fields, rows: rows.slice(0, limit) });
   } catch (e) {
+  if (e && e.loading && e.loading.error) { errors[sources[i] + ':why'] = e.loading.error; }
   errors[sources[i]] = (e.response && e.response.data) ? String(JSON.stringify(e.response.data)).slice(0, 300) : e.message;
   }
   }
