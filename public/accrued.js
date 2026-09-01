@@ -222,13 +222,38 @@
     return { error: 'unknown' };
   }
 
-  async function fetchSum(div, year, fresh, code) { for (var a = 0; a < 2; a++) { try { var r = await fetch('/api/accrued/summary?division=' + div + '&year=' + year + '&code=' + encodeURIComponent(code || S.code) + (fresh ? '&fresh=1' : ''), { credentials: 'same-origin' }); var j = await r.json(); if (r.ok && j && !j.error) return j; if (r.status === 401) return { error: 'Not connected to Exact Online' }; if (r.status === 429) return { error: (j && (j.error || j.detail)) || 'Exact Online has no requests left for this entity right now' }; if (a === 1) return { error: (j && (j.error || j.detail)) || ('HTTP ' + r.status) }; } catch (e) { if (a === 1) return { error: String(e) }; } await sleep(1500); } return { error: 'unknown' }; }
+  // The server answers with what it has read so far and says how far it is. Each
+  // of those partial answers is handed to onPart and painted at once, and the
+  // same job is asked again until Exact Online has been read to the end.
+  async function fetchSum(div, year, fresh, code, onPart) {
+      var url = '/api/accrued/summary?division=' + div + '&year=' + year + '&code=' + encodeURIComponent(code || S.code);
+      var bad = 0;
+      for (var a = 0; a < 400; a++) {
+          try {
+              var r = await fetch(url + ((fresh && !a) ? '&fresh=1' : ''), { credentials: 'same-origin' });
+              var j = await r.json();
+              if (r.ok && j && !j.error) {
+                  if (j.partial) { if (onPart) onPart(j); await sleep(2000); continue; }
+                  return j;
+              }
+              if (r.status === 401) return { error: 'Not connected to Exact Online' };
+              if (r.status === 429) return { error: (j && (j.error || j.detail)) || 'Exact Online has no requests left for this entity right now' };
+              bad++;
+              if (bad >= 2) return { error: (j && (j.error || j.detail)) || ('HTTP ' + r.status) };
+          } catch (e) {
+              bad++;
+              if (bad >= 2) return { error: String(e) };
+          }
+          await sleep(1500);
+      }
+      return { error: 'Exact Online is still reading this entity, please press Apply again' };
+  }
 
   // One entity is one division in Exact Online, and Exact counts its request
   // limit per division. Different entities can therefore be read side by side
   // without pushing that limit, while the years of one entity stay one after
   // the other. That is what turns twenty entities from minutes into seconds.
-  var LANES = 4;
+  var LANES = 8;
   async function run() {
     if (S.busy) return;
     S.busy = true;
@@ -242,8 +267,25 @@
     // One piece of work is one entity, one financial year and one accrual account.
     // The merged choice simply turns into several pieces of work that end up in the
     // same table, so a merged view is built from the very same reads as a single one.
+    // The work is laid out entity by entity in turn, not all years of one entity
+    // first. Exact Online counts its limit per entity, so the lanes then always
+    // work on different entities: sixty of 900, sixty of 610, and on it goes.
+    // Three years of the very same entity used to run at the same time and fight
+    // over one single minute budget, which is why nothing came back.
     var jobs = [];
-    list.forEach(function (m) { ys.forEach(function (y) { cs.forEach(function (c) { jobs.push([m, y, c]); }); }); });
+    var perEnt = [];
+    list.forEach(function (m) {
+        var mine = [];
+        ys.forEach(function (y) { cs.forEach(function (c) { mine.push([m, y, c]); }); });
+        perEnt.push(mine);
+    });
+    for (var turn = 0; ; turn++) {
+        var anyLeft = false;
+        for (var pi = 0; pi < perEnt.length; pi++) {
+            if (turn < perEnt[pi].length) { jobs.push(perEnt[pi][turn]); anyLeft = true; }
+        }
+        if (!anyLeft) break;
+    }
     S.total = jobs.length;
     S.done = 0;
     var fresh = S.fresh ? 1 : 0;
@@ -263,15 +305,32 @@
       window.NUMA_INFO.set({ loaded: inn, pending: out });
     }
     mainInfo();
+    // The answer of every piece of work is kept on its own, so a partial answer
+    // that is followed by a fuller one replaces it instead of being counted twice.
+    var BUCKET = {};
+    function rebuild() {
+        var sr = [], dr = [], gd = 0, gc = 0;
+        Object.keys(BUCKET).forEach(function (k) {
+            var b = BUCKET[k];
+            gd += b.d; gc += b.c;
+            var into = b.summary ? sr : dr;
+            for (var i = 0; i < b.rows.length; i++) { into.push(b.rows[i]); }
+        });
+        S.srows = sr; S.rows = dr; S.gross = { d: gd, c: gc };
+    }
     function absorb(m, y, c, j) {
-      if (j.error) { if (!/no requests left today|429/.test(String(j.error))) misses.push([m, y, c]); S.errors.push(m[1] + ' ' + y + ' ' + c + ': ' + j.error); return; }
-            if (j.accountTotals) { if (!S.gross) S.gross = { d: 0, c: 0 }; S.gross.d += (Number(j.accountTotals.debit) || 0); S.gross.c += (Number(j.accountTotals.credit) || 0); }
-      ((S.view === 'summary' ? j.rows : j.lines) || []).forEach(function (l) {
-        l.entityCode = m[1];
-        l.entityName = m[3];
-        l.division = m[2];
-        if (S.view === 'summary') { S.srows.push(l); } else { S.rows.push(l); }
-      });
+        if (j.error) { if (!/no requests left today|429/.test(String(j.error))) misses.push([m, y, c]); S.errors.push(m[1] + ' ' + y + ' ' + c + ': ' + j.error); return; }
+        var key = m[2] + '|' + y + '|' + c;
+        var b = { summary: S.view === 'summary', rows: [], d: 0, c: 0 };
+        if (j.accountTotals) { b.d = Number(j.accountTotals.debit) || 0; b.c = Number(j.accountTotals.credit) || 0; }
+        ((S.view === 'summary' ? j.rows : j.lines) || []).forEach(function (l) {
+            l.entityCode = m[1];
+            l.entityName = m[3];
+            l.division = m[2];
+            b.rows.push(l);
+        });
+        BUCKET[key] = b;
+        rebuild();
     }
     function tick() {
       var now = Date.now();
@@ -281,14 +340,24 @@
       draw();
     }
     async function lane() {
-      while (next < jobs.length) {
-        var jb = jobs[next++];
-        var j = (S.view === 'summary') ? await fetchSum(jb[0][2], jb[1], fresh, jb[2]) : await fetchOne(jb[0][2], jb[1], fresh, jb[2]);
-        S.done++; EDONE[jb[0][1]] = (EDONE[jb[0][1]] || 0) + 1;
-        absorb(jb[0], jb[1], jb[2], j);
-        setStatus('Loading ' + S.done + ' of ' + S.total + ' (year and account)' + (S.errors.length ? ' - ' + S.errors.length + ' failed' : ''));
-        tick();
-      }
+        while (next < jobs.length) {
+            let jb = jobs[next++];
+            // Every partial answer of a piece of work is put on the screen right away,
+            // so the sixty entries that were just read are visible while the next
+            // sixty are still being fetched from Exact Online.
+            let j = (S.view === 'summary')
+                ? await fetchSum(jb[0][2], jb[1], fresh, jb[2], function (part) {
+                    absorb(jb[0], jb[1], jb[2], part);
+                    var pl = part.loading || {};
+                    setStatus('Reading ' + jb[0][1] + ' ' + jb[1] + ': ' + (pl.done || 0) + ' of ' + (pl.total || 0) + ' journal entries - ' + S.done + ' of ' + S.total + ' done');
+                    tick();
+                })
+                : await fetchOne(jb[0][2], jb[1], fresh, jb[2]);
+            S.done++; EDONE[jb[0][1]] = (EDONE[jb[0][1]] || 0) + 1;
+            absorb(jb[0], jb[1], jb[2], j);
+            setStatus('Loading ' + S.done + ' of ' + S.total + ' (year and account)' + (S.errors.length ? ' - ' + S.errors.length + ' failed' : ''));
+            tick();
+        }
     }
     var lanes = [];
     var wide = Math.min(LANES, jobs.length);
@@ -303,7 +372,7 @@
       for (var z = 0; z < again.length; z++) {
         setStatus('Asking Exact again for ' + (z + 1) + ' of ' + again.length + ' that were refused');
         var mz = again[z][0], yz = again[z][1], cz = again[z][2];
-        absorb(mz, yz, cz, (S.view === 'summary') ? await fetchSum(mz[2], yz, 1, cz) : await fetchOne(mz[2], yz, 1, cz));
+        absorb(mz, yz, cz, (S.view === 'summary') ? await fetchSum(mz[2], yz, 1, cz, function (part) { absorb(mz, yz, cz, part); tick(); }) : await fetchOne(mz[2], yz, 1, cz));
         tick();
       }
     }
