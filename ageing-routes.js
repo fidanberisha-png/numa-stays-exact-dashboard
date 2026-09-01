@@ -66,22 +66,36 @@ module.exports = function (getToken) {
     currentDivisionCache = r.data.d.results[0].CurrentDivision;
     return currentDivisionCache;
   }
+  // The list of companies can be read from any company of the administration.
+  // When the company of the token is the one Exact has refused for today, the
+  // list is asked from the next known company instead, so the dashboards still
+  // get their entities rather than waiting for an answer that cannot come.
   async function getAllDivisions(h) {
     if (divisionsCache) return divisionsCache;
-    const cur = await getCurrentDivision(h);
-    // Do NOT $select (the Division OData model varies, e.g. no HID); fetch all fields and pick safely.
-    const url = BASE + '/' + cur + '/system/Divisions?$orderby=Code';
-    const r = await getEx(url, h);
-    const d = r.data && r.data.d ? r.data.d : r.data;
-    const rows = (d && d.results) ? d.results : (Array.isArray(d) ? d : []);
-    divisionsCache = rows.map(function (x) {
-      const human = (x.HID !== undefined && x.HID !== null) ? x.HID : (x.DivisionCode !== undefined && x.DivisionCode !== null ? x.DivisionCode : null);
-      const name = x.Description || x.CustomerName || ('Division ' + x.Code);
-      const prefix = human !== null && human !== '' ? (human + ' - ') : '';
-      const currency = x.Currency || x.CurrencyCode || null;
-      return { code: x.Code, human: human, name: name, label: prefix + name, currency: currency };
-    });
-    return divisionsCache;
+    const bases = [];
+    try { const cur = await getCurrentDivision(h); if (cur) bases.push(cur); } catch (e) { /* asked below from a known company */ }
+    WARM_CODES.forEach(function (c) { if (bases.indexOf(c) < 0) bases.push(c); });
+    let last = null;
+    for (let b = 0; b < bases.length; b++) {
+      try {
+        // Do NOT $select (the Division OData model varies, e.g. no HID); fetch all fields and pick safely.
+        const url = BASE + '/' + bases[b] + '/system/Divisions?$orderby=Code';
+        const r = await getEx(url, h);
+        const d = r.data && r.data.d ? r.data.d : r.data;
+        const rows = (d && d.results) ? d.results : (Array.isArray(d) ? d : []);
+        if (!rows.length) { continue; }
+        divisionsCache = rows.map(function (x) {
+        const human = (x.HID !== undefined && x.HID !== null) ? x.HID : (x.DivisionCode !== undefined && x.DivisionCode !== null ? x.DivisionCode : null);
+        const name = x.Description || x.CustomerName || ('Division ' + x.Code);
+        const prefix = human !== null && human !== '' ? (human + ' - ') : '';
+        const currency = x.Currency || x.CurrencyCode || null;
+        return { code: x.Code, human: human, name: name, label: prefix + name, currency: currency };
+        });
+        if (!currentDivisionCache) { currentDivisionCache = bases[b]; }
+        return divisionsCache;
+      } catch (e) { last = e; }
+    }
+    throw last || new Error('Divisions failed');
   }
   async function divisionCurrency(division, h) {
     try {
@@ -97,14 +111,36 @@ module.exports = function (getToken) {
   // queued, a 429 is retried with a short backoff, every finished list is kept
   // for a few minutes and, if Exact still refuses, the rows already collected
   // (or the last known list) are used instead of showing an empty screen.
-  // All the dashboards of this server share the one budget Exact Online counts
-  // per division: about sixty calls a minute. The queue therefore lives on the
-  // process instead of in this file, otherwise the ageing, accrued and prepaid
-  // reports would each spend sixty calls of the very same minute and Exact
-  // would refuse them all.
-  const CALL_LOG = (global.__numaRate = global.__numaRate || {});
-  const MAX_PER_MIN = 55;
-  const ROWS_TTL_MS = 10 * 60 * 1000;
+  // Exact Online keeps a day budget per company (five thousand calls) next to
+  // the minute budget. Once that day budget is gone every further call is
+  // refused, so asking again only makes a screen wait for nothing. The moment
+  // Exact says it, the company is put aside until the reset it names, the
+  // dashboards are told in plain words and not one more call is spent on it.
+  const BLOCKED = {};
+  function blockNote(division) {
+    const b = BLOCKED[division];
+    if (!b) { return null; }
+    if (b.until && Date.now() > b.until) { delete BLOCKED[division]; return null; }
+    return b.message;
+  }
+  function noteRefusal(division, e) {
+    const rs = e && e.response;
+    if (!rs || rs.status !== 429 || !rs.headers) { return; }
+    const left = Number(rs.headers['x-ratelimit-remaining']);
+    if (isNaN(left) || left > 0) { return; }
+    const ms = Number(rs.headers['x-ratelimit-reset']);
+    const until = (!isNaN(ms) && ms > Date.now()) ? ms : (Date.now() + 30 * 60 * 1000);
+    const when = new Date(until);
+    const stamp = isNaN(when.getTime()) ? 'the next reset' : (when.toISOString().slice(0, 16).replace('T', ' ') + ' UTC');
+    BLOCKED[division] = {
+      until: until,
+      message: 'Exact Online has no calls left today for this entity (day limit ' + (rs.headers['x-ratelimit-limit'] || '?') + '). It is free again on ' + stamp + '.'
+    };
+  }
+
+  const CALL_LOG = {};
+  const MAX_PER_MIN = 58;
+  const ROWS_TTL_MS = 2 * 60 * 60 * 1000;
   // A list that is older than the fresh window is still handed over at once and
   // renewed in the background, so a screen never waits for a full read twice.
   const STALE_MAX_MS = 24 * 60 * 60 * 1000;
@@ -114,27 +150,26 @@ module.exports = function (getToken) {
   // as well. Nineteen entities are then read next to each other instead of
   // sharing one single budget of 58 calls a minute.
   function divOf(u) { const m = /\/api\/v1\/(\d+)\//.exec(String(u || '')); return m ? m[1] : 'x'; }
-  async function slot(u, soft) {
+  async function slot(u) {
     const k = divOf(u);
     if (!CALL_LOG[k]) { CALL_LOG[k] = []; }
     const log = CALL_LOG[k];
     for (let i = 0; i < 20; i++) {
       const now = Date.now();
       while (log.length && (now - log[0]) > 60000) { log.shift(); }
-      // Work that only fills the picture in, like looking up the payable G/L
-      // account of an open item, may use no more than a third of the minute, so
-      // a report on the screen is never left waiting behind it.
-      const cap = soft ? Math.ceil(MAX_PER_MIN / 5) : MAX_PER_MIN;
-      if (log.length < cap) { log.push(now); return; }
+      if (log.length < MAX_PER_MIN) { log.push(now); return; }
       await sleep(1000);
     }
     log.push(Date.now());
   }
-  async function getEx(url, h, soft) {
+  async function getEx(url, h) {
     let wait = 1200;
     let last = null;
     for (let i = 0; i < 4; i++) {
-      await slot(url, soft);
+      const dv = divOf(url);
+      const stop = blockNote(dv);
+      if (stop) { const be = new Error(stop); be.blocked = true; be.division = dv; throw be; }
+      await slot(url);
       // A long read is allowed to take minutes, and the access token of Exact
       // Online lives only ten. The header is therefore taken again for every
       // single call, and a refusal because of an expired token is retried.
@@ -143,6 +178,10 @@ module.exports = function (getToken) {
       catch (e) {
         last = e;
         const st = e.response ? e.response.status : 0;
+        if (st === 429) {
+          noteRefusal(dv, e);
+          if (BLOCKED[dv]) { const be = new Error(BLOCKED[dv].message); be.blocked = true; be.division = dv; throw be; }
+        }
         if (st !== 401 && st !== 429 && st !== 502 && st !== 503) throw e;
         if (i === 3) throw e;
         const ra = Number(e.response && e.response.headers ? e.response.headers['retry-after'] : 0);
@@ -181,8 +220,6 @@ module.exports = function (getToken) {
         rowsCache[key] = { at: Date.now(), rows: job.rows, complete: job.complete };
       } catch (e) {
         job.err = e;
-        job.errText = (e.response && e.response.data) ? String(JSON.stringify(e.response.data)).slice(0, 300) : String((e && e.message) || e);
-        try { console.error('numa: read failed', division, path, 'page', job.pages, job.errText); } catch (e2) { }
         // A list that was cut off is kept only as a stopgap, never as the truth.
         if (job.rows.length && !(rowsCache[key] && rowsCache[key].complete)) {
           rowsCache[key] = { at: Date.now(), rows: job.rows, complete: false };
@@ -213,7 +250,7 @@ module.exports = function (getToken) {
     if (job.done && (Date.now() - job.at) > 30000) { startJob(key, division, path, h, maxPages); }
     if (!part.length) {
       const e = new Error('Still reading from Exact Online');
-      e.loading = { pages: job.pages, rows: 0, error: job.errText || null };
+      e.loading = { pages: job.pages, rows: 0 };
       throw e;
     }
     const out = part.slice();
@@ -274,16 +311,7 @@ module.exports = function (getToken) {
   }
   function accumulate(map, rows, referTo, refDate, currency, rates, edges, allow, stats, division, gi, glStats) {
     const nb = edges.length + 1;
-    const cutoff = refDate ? (refDate.getTime() + 86399999) : 0;
     rows.forEach(function (row) {
-    // Exact Online shows the picture as it stood on the reference date, so an
-    // item booked after that date is not part of it. Such an item used to fall
-    // into the first bucket and made the report differ from the ageing
-    // analysis of Exact Online.
-    if (cutoff) {
-      const d0 = toDate(row.InvoiceDate) || toDate(row.Date) || toDate(row.DueDate);
-      if (d0 && d0.getTime() > cutoff) { if (stats) { stats.future = (stats.future || 0) + 1; } return; }
-    }
     let ga = null;
     if (gi) {
       ga = glOfRow(row, gi);
@@ -383,12 +411,12 @@ module.exports = function (getToken) {
   // falls back to the payable account of the purchase journals that are used
   // the most, which is the default creditor account of the entity.
   const AP_GL_TYPE = 22;
-  const GL_TTL_MS = 24 * 60 * 60 * 1000;
+  const GL_TTL_MS = 6 * 60 * 60 * 1000;
   const glInfoCache = {};
   async function apGlInfo(division, h) {
     const hit = glInfoCache[division];
     if (hit && (Date.now() - hit.at) < GL_TTL_MS) { return hit; }
-    const info = { at: Date.now(), accounts: [], byJournal: {}, fallback: null, byEntry: {}, entryTried: {}, resolving: 0, wanted: {}, byPair: {}, stat: { tried: 0, found: 0, fail: 0, noEntry: 0, calls: 0 } };
+    const info = { at: Date.now(), accounts: [], byJournal: {}, fallback: null };
     try {
       const accs = await fetchAll(division, 'financial/GLAccounts?$select=Code,Description,Type&$filter=Type eq ' + AP_GL_TYPE, h, 10, 25000);
       accs.forEach(function (a) {
@@ -397,15 +425,6 @@ module.exports = function (getToken) {
         if (code || desc) { info.accounts.push({ code: code, description: desc || ('G/L ' + code) }); }
       });
     } catch (e) { /* the picker simply stays empty for this entity */ }
-    // Two payable accounts carry the figures of this report; every other
-    // payable account of Exact stays a name in the picker and no open item is
-    // ever read or counted for it.
-    info.accounts.forEach(function (a) {
-      let ok = false;
-      for (let i = 0; i < AP_DESCRIPTIONS.length; i++) { if (norm(a.description) === norm(AP_DESCRIPTIONS[i])) { ok = true; break; } }
-      a.nameOnly = !ok;
-      if (ok && a.code) { info.wanted[String(a.code)] = a.description; }
-    });
     try {
       const js = await fetchAll(division, 'financial/Journals?$select=Code,Description,GLAccountCode,GLAccountDescription&$filter=Type eq ' + AP_GL_TYPE, h, 10, 25000);
       const used = {};
@@ -428,173 +447,11 @@ module.exports = function (getToken) {
   }
   function glOfRow(row, info) {
     if (!info) { return null; }
-    // The journal entry itself is the truth, so it comes first.
-    const en = String(row.EntryNumber === undefined || row.EntryNumber === null ? '' : row.EntryNumber).trim();
-    const ac = String(row.AccountCode === undefined || row.AccountCode === null ? '' : row.AccountCode).trim();
-    // One entry can hold the invoices of several suppliers on several payable
-    // accounts, so the line of this very supplier is looked at first.
-    if (en && ac && info.byPair[en + '|' + ac]) { return info.byPair[en + '|' + ac]; }
-    if (en && info.byEntry[en]) { return info.byEntry[en]; }
     const jc = String(row.JournalCode === undefined || row.JournalCode === null ? '' : row.JournalCode).trim();
-    // The account of the journal is a provisional answer, used only while the
-    // journal entry itself has not been read yet. The entry is the truth.
-    if (jc && info.byJournal[jc] && !(en && info.entryTried[en])) { return info.byJournal[jc]; }
+    if (jc && info.byJournal[jc]) { return info.byJournal[jc]; }
     const desc = glText(row);
     if (desc) { return { code: glCode(row) || '', description: desc }; }
-    // No silent fallback any more. An item booked through a bank or a general
-    // journal used to be counted on the busiest purchase account, which tore
-    // invoices and their payments apart: picking one G/L account then showed the
-    // payments without their invoices and the report went negative. Such an item
-    // is shown as not linked until the lookup below has found its real account.
-    return null;
-  }
-  // ---- The real payable G/L account of an open item ----------------------
-  // The open item list of Exact carries no G/L account, only the journal and the
-  // entry number. For an item that did not come from a purchase journal the
-  // journal entry is read and the line that sits on a payable account of this
-  // entity is taken, which is the account Exact really books the item on.
-  const ENTRY_CHUNK = 40;
-  const ENTRY_MAX = 30000;
-  const RESOLVE_LANES = 1;
-  const entryRunning = {};
-  function yearOfRow(row) {
-    const d = toDate(row.InvoiceDate) || toDate(row.Date) || toDate(row.DueDate);
-    return d ? d.getFullYear() : 0;
-  }
-  async function readLines(division, path, h) {
-    let url = BASE + '/' + division + '/' + path;
-    let rows = [];
-    let pages = 0;
-    while (url && pages < 25) {
-      const r = await getEx(url, function () { return headers() || h; }, true);
-      const d = r.data && r.data.d ? r.data.d : r.data;
-      const part = d && d.results ? d.results : (Array.isArray(d) ? d : []);
-      rows = rows.concat(part);
-      url = d && d.__next ? d.__next : null;
-      pages = pages + 1;
-    }
-    return rows;
-  }
-  async function resolveEntries(division, info, list, h) {
-    const codes = {};
-    info.accounts.forEach(function (a) { if (a.code) { codes[String(a.code)] = a.description; } });
-    const all = list.map(function (x) { return String(x[0]); });
-    const sel = '$select=EntryNumber,GLAccountCode,GLAccountDescription,AccountCode';
-    // The entry number alone is asked for. A filter on the financial year used
-    // to be added as well, but Exact books an invoice of December in the next
-    // financial year, so the year hid the real account and the item was counted
-    // on the wrong payable account. An entry number is unique in a company, so
-    // neither a year nor a period is needed.
-    async function readChunk(part) {
-      const inner = '(' + part.map(function (n) { return 'EntryNumber eq ' + n; }).join(' or ') + ')';
-      const tries = [
-        'bulk/Financial/TransactionLines?' + sel + '&$filter=' + inner,
-        'financialtransaction/TransactionLines?' + sel + '&$filter=' + inner
-      ];
-      for (let t = 0; t < tries.length; t++) {
-        try { const rows = await readLines(division, tries[t], h); info.stat.calls = info.stat.calls + 1; return rows; }
-        catch (e) { /* the other shape of the query is tried */ }
-      }
-      return null;
-    }
-    async function take(part) {
-      const rows = await readChunk(part);
-      if (!rows && part.length > 1) {
-        // A block Exact refuses is cut in two, so one bad entry number can never
-        // keep the others from being found.
-        const half = Math.floor(part.length / 2);
-        await take(part.slice(0, half));
-        await take(part.slice(half));
-        return;
-      }
-      const found = {};
-      const pair = {};
-      (rows || []).forEach(function (r) {
-        const n = String(r.EntryNumber === undefined || r.EntryNumber === null ? '' : r.EntryNumber).trim();
-        const gc = String(r.GLAccountCode === undefined || r.GLAccountCode === null ? '' : r.GLAccountCode).trim();
-        if (!n || !gc || codes[gc] === undefined) { return; }
-        const ac = String(r.AccountCode === undefined || r.AccountCode === null ? '' : r.AccountCode).trim();
-        // One journal entry can carry the invoices of several suppliers on
-        // several payable accounts, so the supplier of the line is kept next to
-        // the entry number: the answer is given per line, not per entry.
-        if (ac) {
-          const k = n + '|' + ac;
-          if (pair[k] !== undefined && pair[k] !== gc) { pair[k] = '?'; } else { pair[k] = gc; }
-        }
-        if (found[n] !== undefined && found[n] !== gc) { found[n] = '?'; } else { found[n] = gc; }
-      });
-      Object.keys(pair).forEach(function (k) {
-        const gc = pair[k];
-        if (gc && gc !== '?') { info.byPair[k] = { code: gc, description: codes[gc] || ('G/L ' + gc) }; }
-      });
-      part.forEach(function (n) {
-        if (rows) { info.entryTried[n] = 1; info.stat.tried = info.stat.tried + 1; }
-        else { info.stat.fail = info.stat.fail + 1; }
-        const gc = found[n];
-        if (gc && gc !== '?') { info.byEntry[n] = { code: gc, description: codes[gc] || ('G/L ' + gc) }; info.stat.found = info.stat.found + 1; }
-      });
-      info.resolving = Math.max(0, (info.resolving || 0) - part.length);
-    }
-    let next = 0;
-    async function lane() {
-      for (;;) {
-        const i = next;
-        next = next + ENTRY_CHUNK;
-        if (i >= all.length) { return; }
-        await take(all.slice(i, i + ENTRY_CHUNK));
-      }
-    }
-    const lanes = [];
-    for (let i = 0; i < RESOLVE_LANES; i++) { lanes.push(lane()); }
-    await Promise.all(lanes);
-    info.resolving = 0;
-  }
-  function pendingEntries(info, rows) {
-    const want = [];
-    const later = [];
-    const seen = {};
-    for (let i = 0; i < rows.length; i++) {
-      const row = rows[i];
-      const jc = String(row.JournalCode === undefined || row.JournalCode === null ? '' : row.JournalCode).trim();
-      // Every open item is looked up in its own journal entry, an item from a
-      // purchase journal too: Exact lets an entry be booked on another payable
-      // account than the journal carries - an intercompany invoice is the usual
-      // case - so the account of the journal is a hint, never the answer.
-      const en = String(row.EntryNumber === undefined || row.EntryNumber === null ? '' : row.EntryNumber).trim();
-      if (!en || en === '0' || !/^[0-9]+$/.test(en)) { if (info.stat) { info.stat.noEntry = info.stat.noEntry + 1; } continue; }
-      if (info.byEntry[en] || info.entryTried[en] || seen[en]) { continue; }
-      seen[en] = 1;
-      // An item from a purchase journal already carries a provisional account, so
-      // it waits: the items whose journal says nothing are looked up first.
-      const jc2 = String(row.JournalCode === undefined || row.JournalCode === null ? '' : row.JournalCode).trim();
-      if (jc2 && info.byJournal[jc2]) { later.push([en, yearOfRow(row)]); } else { want.push([en, yearOfRow(row)]); }
-      if ((want.length + later.length) >= ENTRY_MAX) { break; }
-    }
-    return want.concat(later);
-  }
-  // Started next to the report, never in front of it: the screen shows what is
-  // known and asks again a few seconds later, so nothing waits on this.
-  function queueEntryGl(division, info, rows, h) {
-    if (!info || !rows || !rows.length || entryRunning[division]) { return; }
-    const want = pendingEntries(info, rows);
-    if (!want.length) { return; }
-    entryRunning[division] = 1;
-    info.resolving = want.length;
-    (async function () {
-      try { await resolveEntries(division, info, want, h); }
-      catch (e) { info.resolving = 0; }
-      entryRunning[division] = 0;
-    })();
-  }
-  async function resolveFromRows(division, info, rows, h) {
-    if (!info || !rows || !rows.length || entryRunning[division]) { return; }
-    const want = pendingEntries(info, rows);
-    if (!want.length) { return; }
-    entryRunning[division] = 1;
-    info.resolving = want.length;
-    try { await resolveEntries(division, info, want, h); }
-    catch (e) { info.resolving = 0; }
-    entryRunning[division] = 0;
+    return info.fallback;
   }
   router.get('/api/divisions', async function (req, res) {
     const h = headers();
@@ -627,7 +484,7 @@ module.exports = function (getToken) {
   // just like the ageing screen of Exact Online when its G/L list is left empty.
   // The choice is made on the DESCRIPTION of the account, because the same
   // account carries a different number in every entity.
-  const glParam = (req.query.gl === undefined || req.query.gl === null) ? String() : String(req.query.gl);
+    const glParam = (!cfg.withGl || req.query.gl === undefined || req.query.gl === null) ? String() : String(req.query.gl);
   const allowList = (glParam === '' || glParam.toLowerCase() === 'all') ? [] : glParam.split('|').map(function (x) { return x.trim(); }).filter(function (x) { return x !== ''; });
     const h = headers();
     if (!h) return res.status(401).json({ error: 'Not authenticated' });
@@ -653,60 +510,30 @@ module.exports = function (getToken) {
     const map = {}; let totalRows = 0; let gotAny = false;
   const glStats = {};
   const glOptMap = {};
-    const stats = { skipped: 0, future: 0 };
-    const resolveStats = {};
+    const stats = { skipped: 0 };
     // The whole answer gets about 40 seconds; whatever is not read by then keeps
     // reading in the background and the dashboard asks again a few seconds later.
     const budgetUntil = Date.now() + 40000;
     let waiting = null;
-    // Exact Online counts its minute limit per division, so the entities are read
-    // next to each other instead of one after the other. Nineteen entities in a
-    // row used to eat the whole time budget and the last ones never made it into
-    // the answer.
-    let resolvingLeft = 0;
-    let nextTarget = 0;
-    async function readTarget() {
-      for (;;) {
-        const i = nextTarget++;
-        if (i >= targets.length) { return; }
-        const cur = await divisionCurrency(targets[i], h);
-        const gi = cfg.withGl ? await apGlInfo(targets[i], h) : null;
-        if (gi) {
-          gi.accounts.forEach(function (a) {
-            const k = norm(a.description);
-            if (!glOptMap[k]) { glOptMap[k] = { description: a.description, codes: [] }; }
-            if (a.code && glOptMap[k].codes.indexOf(a.code) < 0) { glOptMap[k].codes.push(a.code); }
-            if (a.nameOnly === false) { glOptMap[k].nameOnly = false; }
-            else if (glOptMap[k].nameOnly === undefined) { glOptMap[k].nameOnly = true; }
-          });
-        }
-        const left = Math.max(1500, budgetUntil - Date.now());
-        const r = await fetchRowsFor(targets[i], sources, h, out.errors, left);
-        if (r.loading) {
-        if (r.loading.error) { out.errors[targets[i] + ':read'] = r.loading.error; }
-          if (!waiting) { waiting = { pages: 0, rows: 0, entities: 0 }; }
-          waiting.pages += r.loading.pages; waiting.rows += r.loading.rows; waiting.entities += 1;
-        }
-        if (r.rows) {
-          gotAny = true; if (!out.source) out.source = r.source; totalRows += r.rows.length;
-          if (gi) { queueEntryGl(targets[i], gi, r.rows, h); }
-          accumulate(map, r.rows, referTo, refDate, cur, rates, edges, allowList, stats, targets[i], gi, glStats);
-        }
-        if (gi && gi.resolving) { resolvingLeft += gi.resolving; }
-      if (gi && gi.stat) { resolveStats[String(targets[i])] = { tried: gi.stat.tried, found: gi.stat.found, fail: gi.stat.fail, noEntry: gi.stat.noEntry, calls: gi.stat.calls, pairs: Object.keys(gi.byPair).length }; }
+    for (let i = 0; i < targets.length; i++) {
+      const cur = await divisionCurrency(targets[i], h);
+    const gi = cfg.withGl ? await apGlInfo(targets[i], h) : null;
+    if (gi) {
+      gi.accounts.forEach(function (a) {
+        const k = norm(a.description);
+        if (!glOptMap[k]) { glOptMap[k] = { description: a.description, codes: [] }; }
+        if (a.code && glOptMap[k].codes.indexOf(a.code) < 0) { glOptMap[k].codes.push(a.code); }
+      });
+    }
+      const left = Math.max(1500, budgetUntil - Date.now());
+      const r = await fetchRowsFor(targets[i], sources, h, out.errors, left);
+      if (r.loading) {
+        if (!waiting) { waiting = { pages: 0, rows: 0, entities: 0 }; }
+        waiting.pages += r.loading.pages; waiting.rows += r.loading.rows; waiting.entities += 1;
       }
+      if (r.rows) { gotAny = true; if (!out.source) out.source = r.source; totalRows += r.rows.length; accumulate(map, r.rows, referTo, refDate, cur, rates, edges, allowList, stats, targets[i], gi, glStats); }
     }
-    const readers = [];
-    const wideRead = Math.min(8, targets.length);
-    for (let i = 0; i < wideRead; i++) { readers.push(readTarget()); }
-    await Promise.all(readers);
     if (waiting) { out.loading = waiting; }
-    // While the payable G/L accounts of the open items are still being looked up
-    // the dashboard is told to come back, so the numbers complete themselves.
-    if (resolvingLeft) {
-      out.resolving = resolvingLeft;
-      if (!out.loading) { out.loading = { pages: 0, rows: totalRows, entities: 0, resolving: resolvingLeft }; }
-    }
     if (!gotAny) {
       if (waiting) { return res.status(202).json(out); }
       return res.status(502).json(out);
@@ -714,7 +541,7 @@ module.exports = function (getToken) {
   out.glOptions = Object.keys(glOptMap).map(function (k) { return glOptMap[k]; }).sort(function (x, y) { return String(x.description).localeCompare(String(y.description)); });
   out.glUsed = Object.keys(glStats).map(function (k) { return glStats[k]; }).sort(function (x, y) { return y.count - x.count; });
     const done = finalize(map, edges);
-    out.accounts = done.accounts; out.totals = done.totals; out.itemCount = totalRows; out.skippedRows = stats.skipped; out.futureRows = stats.future || 0; out.resolveStats = resolveStats;
+    out.accounts = done.accounts; out.totals = done.totals; out.itemCount = totalRows; out.skippedRows = stats.skipped;
     res.json(out);
   }
   // Diagnostic: the raw rows of the list Exact keeps behind the ageing report,
@@ -735,54 +562,10 @@ module.exports = function (getToken) {
   const fields = rows.length ? Object.keys(rows[0]) : [];
   return res.json({ division: division, source: sources[i], count: rows.length, fields: fields, rows: rows.slice(0, limit) });
   } catch (e) {
-  if (e && e.loading && e.loading.error) { errors[sources[i] + ':why'] = e.loading.error; }
   errors[sources[i]] = (e.response && e.response.data) ? String(JSON.stringify(e.response.data)).slice(0, 300) : e.message;
   }
   }
   return res.status(502).json({ error: 'no source worked', errors: errors });
-  });
-  // Diagnostic: which payable G/L account every open item of one supplier is
-  // counted on, and where that answer comes from. Read only, so the figures of
-  // the dashboard can be checked against the ageing analysis of Exact Online.
-  router.get('/api/ageing-gl', async function (req, res) {
-    const h = headers();
-    if (!h) return res.status(401).json({ error: 'Not authenticated' });
-    const division = req.query.division ? String(req.query.division) : null;
-    if (!division) return res.status(400).json({ error: 'division is required' });
-    try {
-      if (req.query.entry) {
-        const sel = '$select=EntryNumber,GLAccountCode,GLAccountDescription,AccountCode,AmountDC,Date,JournalCode,Description';
-        const one = parseInt(String(req.query.entry), 10) || 0;
-        const lines = await readLines(division, 'bulk/Financial/TransactionLines?' + sel + '&$filter=EntryNumber eq ' + one, h);
-        return res.json({ entry: one, count: lines.length, lines: lines });
-      }
-      const gi = await apGlInfo(division, h);
-      const rows = await fetchAll(division, AP_SOURCES[0], h, 600, 40000);
-      const code = String(req.query.code || '').trim();
-      const out = [];
-      let seen = 0;
-      rows.forEach(function (row) {
-        const ac = String(row.AccountCode === undefined || row.AccountCode === null ? '' : row.AccountCode).trim();
-        if (code && ac !== code) { return; }
-        seen = seen + 1;
-        if (out.length >= 400) { return; }
-        const en = String(row.EntryNumber === undefined || row.EntryNumber === null ? '' : row.EntryNumber).trim();
-        const ga = glOfRow(row, gi);
-        const pk = en + '|' + ac;
-        out.push({
-          account: ac, entry: en, journal: String(row.JournalCode || ''),
-          invoice: String(row.InvoiceNumber || ''), date: iso(toDate(row.InvoiceDate) || toDate(row.Date)),
-          due: iso(toDate(row.DueDate)), amount: num(row.Amount), currency: String(row.CurrencyCode || ''),
-          gl: ga ? ga.code : null, glName: ga ? ga.description : null,
-          pair: gi.byPair[pk] ? gi.byPair[pk].code : null,
-          entryGl: gi.byEntry[en] ? gi.byEntry[en].code : null,
-          tried: gi.entryTried[en] ? 1 : 0
-        });
-      });
-      res.json({ division: division, code: code, rows: seen, shown: out.length, resolving: gi.resolving || 0, stat: gi.stat, accounts: gi.accounts, journals: gi.byJournal, items: out });
-    } catch (e) {
-      res.status(500).json({ error: 'failed', details: e.message });
-    }
   });
   router.get('/api/ageing-ap', function (req, res) { return handleAgeing(req, res, { sources: AP_SOURCES, edges: AP_EDGES, gl: [], withGl: true }); });
   router.get('/api/ageing-ar', function (req, res) { return handleAgeing(req, res, { sources: AR_SOURCES, edges: AR_EDGES, gl: [] }); });
@@ -794,7 +577,7 @@ module.exports = function (getToken) {
   // that is opened afterwards is answered from memory in well under a second and
   // the renewal never blocks the screen.
   const WARM_START_MS = 15000;
-  const WARM_EVERY_MS = 10 * 60 * 1000;
+  const WARM_EVERY_MS = 2 * 60 * 60 * 1000;
   const WARM_LANES = 6;
   // Only the nineteen entities the dashboards actually show are kept warm. The
   // administration holds many more companies and reading them all would eat the
@@ -823,15 +606,9 @@ module.exports = function (getToken) {
         while (next < list.length) {
           const t = list[next];
           next = next + 1;
-        let gi0 = null;
-        try { gi0 = await apGlInfo(t.division, h); } catch (e) { gi0 = null; }
-        // The real payable G/L account of every open item is resolved here, in the
-        // background, so a dashboard opened later already has it.
-        try {
-          const wrows = await fetchAll(t.division, t.path, h, 600, 240000);
-          if (gi0 && t.path === AP_SOURCES[0] && wrows && wrows.length) { await resolveFromRows(t.division, gi0, wrows, h); }
-        }
-        catch (e) { /* the next round tries again */ }
+        try { await apGlInfo(t.division, h); } catch (e) { }
+          try { await fetchAll(t.division, t.path, h, 600, 240000); }
+          catch (e) { /* the next round tries again */ }
           warmInfo.done = warmInfo.done + 1;
         }
       }
