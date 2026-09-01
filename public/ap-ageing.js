@@ -72,6 +72,7 @@ function load() {
   var div = (S.division || (el('company') ? el('company').value : '') || 'consolidated');
   var endpoint = (S.dashboard === 'ar') ? '/api/ageing-ar' : '/api/ageing-ap';
   var url = endpoint + '?referTo=' + encodeURIComponent(el('referto').value) + '&date=' + encodeURIComponent(el('refdate').value) + '&division=' + encodeURIComponent(div);
+  if (window.NUMA_GLSEL && window.NUMA_GLSEL().length) { url = url + '&gl=' + encodeURIComponent(window.NUMA_GLSEL().join('|')); }
   fetch(url, { credentials: 'same-origin' }).then(function (r) {
     return r.json().then(function (j) { return { ok: r.ok, j: j }; });
   }).then(function (res) {
@@ -132,6 +133,7 @@ function stamp() {
   var glNote = (d.glAccounts && d.glAccounts.length) ? (' - only G/L ' + esc(d.glAccounts.join(' + '))) : '';
 var skipNote = d.skippedRows ? (' - ' + d.skippedRows + ' rows of other accounts left out') : '';
 el('note').innerHTML = 'Division ' + esc(d.division) + ' - source ' + esc(d.source) + ' - ' + (d.itemCount || 0) + ' open items' + glNote + skipNote + extra;
+  if (d.glOptions && d.glOptions.length && window.NUMA_GLADD) { window.NUMA_GLADD(d.glOptions); }
 }
 // The ranges are not fixed any more: the report itself says which ranges it is
 // cut in, so A/P can use the fine ranges of Exact and A/R keeps its own.
@@ -422,7 +424,7 @@ setInterval(function () { conn(); load(); }, 7200000);
   async function getOne(ep, div, date, rt) {
     for (var a = 0; a < 3; a++) {
       try {
-        var r = await NF.call(window, ep + '?division=' + div + '&date=' + date + '&referTo=' + rt, { credentials: 'same-origin' });
+        var r = await NF.call(window, ep + '?division=' + div + '&date=' + date + '&referTo=' + rt + glQ(), { credentials: 'same-origin' });
         var j = await r.json();
         var bad = j && j.errors && !Array.isArray(j.errors) && Object.keys(j.errors).length > 0;
         if (r.status === 200 && !bad) return j;
@@ -458,7 +460,7 @@ setInterval(function () { conn(); load(); }, 7200000);
     }
     if (url.indexOf('/api/ageing-') > -1 && (url.indexOf('division=selected') > -1 || url.indexOf('division=consolidated') > -1)) {
       var u = new URL(url, location.origin), ep = u.pathname, date = u.searchParams.get('date'), rt = u.searchParams.get('referTo');
-      var ckey = ep + '|' + date + '|' + rt + '|' + getPick().join(',');
+      var ckey = ep + '|' + date + '|' + rt + '|' + getPick().join(',') + '|' + glSel().join(',');
       if (CONS.key === ckey && CONS.p) { return CONS.p.then(function (o) { return jr(o); }); }
       if (CONS.key === ckey && CONS.done && (Date.now() - CONS.at) < 45000) { return Promise.resolve(jr(CONS.done)); }
       CONS.key = ckey; CONS.done = null;
@@ -478,6 +480,7 @@ setInterval(function () { conn(); load(); }, 7200000);
           for (var i = 0; i < LIST.length; i++) {
             var m = LIST[i], j = got[i], t = (j && j.totals) || {};
             if (!j) { continue; }
+            if (j.glOptions) { glAddOptions(j.glOptions); }
             if (j.loading) { waiting = waiting + 1; }
             if (!BKZ && j.buckets && j.buckets.length) { BKZ = j.buckets; }
             var kk = BKZ ? BKZ.map(function (b) { return b.key; }) : ['b1', 'b2', 'b3', 'b4'];
@@ -558,6 +561,114 @@ setInterval(function () { conn(); load(); }, 7200000);
     }
     return p;
   };
+  // ---- Which payable G/L accounts are counted (A/P) ------------------------
+  // Exact Online shows a tick list of the payable G/L accounts of an entity;
+  // the same list is here. Every entity numbers the same account differently,
+  // so the accounts are held together by their DESCRIPTION and every account
+  // appears only once, also in the consolidated view. Nothing ticked means
+  // every account is counted, exactly like an empty selection in Exact.
+  var GLKEY = 'numaApGl';
+  var GLOPTS = [];
+  function glSel() {
+    try { var v = JSON.parse(localStorage.getItem(GLKEY) || '[]'); return Array.isArray(v) ? v : []; } catch (e) { return []; }
+  }
+  function setGlSel(list) { try { localStorage.setItem(GLKEY, JSON.stringify(list)); } catch (e) { } }
+  function glQ() { var s = glSel(); return s.length ? ('&gl=' + encodeURIComponent(s.join('|'))) : ''; }
+  window.NUMA_GLSEL = glSel;
+  function glAddOptions(list) {
+    if (!list || !list.length) { return; }
+    var changed = false;
+    list.forEach(function (o) {
+      var d = String((o && o.description) || '').trim();
+      if (!d) { return; }
+      var f = null;
+      for (var i = 0; i < GLOPTS.length; i++) { if (GLOPTS[i].description.toLowerCase() === d.toLowerCase()) { f = GLOPTS[i]; break; } }
+      if (!f) { f = { description: d, codes: [] }; GLOPTS.push(f); changed = true; }
+      (o.codes || []).forEach(function (c) { c = String(c); if (c && f.codes.indexOf(c) < 0) { f.codes.push(c); changed = true; } });
+    });
+    if (changed) { GLOPTS.sort(function (a, b) { return a.description.localeCompare(b.description); }); glPaint(); }
+  }
+  window.NUMA_GLADD = glAddOptions;
+  function glLabel() {
+    var s = glSel();
+    if (!s.length) { return 'G/L accounts: all' + (GLOPTS.length ? (' (' + GLOPTS.length + ')') : ''); }
+    if (s.length === 1) { return 'G/L: ' + s[0]; }
+    return 'G/L: ' + s.length + ' of ' + Math.max(GLOPTS.length, s.length) + ' accounts';
+  }
+  function ensureGlPicker() {
+    var dash = (document.getElementById('dashboard') || {}).value;
+    var box = document.getElementById('glPickWrap');
+    var controls = document.querySelector('.controls');
+    if (dash !== 'ap') { if (box) { box.style.display = 'none'; } return; }
+    if (!controls) { return; }
+    if (!box) {
+      box = document.createElement('div');
+      box.className = 'ctl';
+      box.id = 'glPickWrap';
+      box.style.position = 'relative';
+      box.innerHTML = '<label>G/L ACCOUNTS</label><button type="button" class="btn sec" id="glPickBtn" style="white-space:nowrap"></button><div id="glPickPanel" style="display:none;position:absolute;top:100%;left:0;z-index:9998;margin-top:6px;width:440px;max-width:88vw;max-height:340px;overflow:auto;padding:10px 12px;border:1px solid #c7d5ef;border-radius:10px;background:#ffffff;box-shadow:0 10px 26px rgba(26,26,24,.18)"></div>';
+      controls.appendChild(box);
+      document.getElementById('glPickBtn').onclick = function (ev) {
+        ev.stopPropagation();
+        var p = document.getElementById('glPickPanel');
+        p.style.display = (p.style.display === 'none') ? 'block' : 'none';
+        glPaint();
+      };
+      document.addEventListener('click', function (ev) {
+        var p = document.getElementById('glPickPanel');
+        if (!p || p.style.display === 'none') { return; }
+        if (box.contains(ev.target)) { return; }
+        p.style.display = 'none';
+      });
+    }
+    box.style.display = '';
+    glPaint();
+  }
+  function glPaint() {
+    var b = document.getElementById('glPickBtn');
+    if (b) { b.textContent = glLabel(); }
+    var p = document.getElementById('glPickPanel');
+    if (!p || p.style.display === 'none') { return; }
+    var sel = glSel();
+    var h = '<div style="font-size:11.5px;color:#6f6a6b;margin-bottom:8px">The payable G/L accounts of Exact Online. Nothing ticked means every account is counted. The accounts are held together by their description, so an account that carries another number in another entity is listed only once.</div>';
+    h += '<div style="margin-bottom:8px"><button type="button" class="btn sec" id="glAll" style="padding:4px 9px;font-size:12px">Select all</button> <button type="button" class="btn sec" id="glNone" style="padding:4px 9px;font-size:12px">Clear (count all)</button></div>';
+    if (!GLOPTS.length) { h += '<div style="font-size:12px;color:#6f6a6b">The list fills itself as soon as the first entity is read.</div>'; }
+    GLOPTS.forEach(function (o, i) {
+      var on = sel.indexOf(o.description) > -1;
+      h += '<label style="display:flex;gap:8px;align-items:flex-start;padding:4px 0;font-size:12.5px;cursor:pointer">'
+        + '<input type="checkbox" class="glOpt" data-i="' + i + '"' + (on ? ' checked' : '') + ' style="margin-top:2px">'
+        + '<span><b>' + esc(o.description) + '</b>'
+        + (o.codes.length ? ('<span style="color:#6f6a6b"> - ' + esc(o.codes.slice(0, 8).join(', ')) + (o.codes.length > 8 ? ' ...' : '') + '</span>') : '')
+        + '</span></label>';
+    });
+    p.innerHTML = h;
+    var all = document.getElementById('glAll');
+    var none = document.getElementById('glNone');
+    if (all) { all.onclick = function (ev) { ev.stopPropagation(); setGlSel(GLOPTS.map(function (o) { return o.description; })); glApply(); }; }
+    if (none) { none.onclick = function (ev) { ev.stopPropagation(); setGlSel([]); glApply(); }; }
+    [].slice.call(p.querySelectorAll('.glOpt')).forEach(function (c) {
+      c.onclick = function (ev) { ev.stopPropagation(); };
+      c.onchange = function () {
+        var cur = glSel();
+        var d = GLOPTS[Number(c.getAttribute('data-i'))].description;
+        var at = cur.indexOf(d);
+        if (c.checked && at < 0) { cur.push(d); }
+        if (!c.checked && at > -1) { cur.splice(at, 1); }
+        setGlSel(cur);
+        glApply();
+      };
+    });
+  }
+  var glTimer = null;
+  function glApply() {
+    glPaint();
+    if (glTimer) { clearTimeout(glTimer); }
+    // A few ticks in a row are collected, so the entities are read only once.
+    glTimer = setTimeout(function () {
+      CONS.key = null; CONS.done = null; CONS.p = null;
+      if (typeof window.load === 'function') { window.load(); }
+    }, 700);
+  }
   // ---- Which entities go into the consolidated view ------------------------
   // The entity box keeps the single entities, and next to it a tick list lets
   // any mix of entities be chosen. The choice is remembered in this browser and
@@ -666,7 +777,7 @@ setInterval(function () { conn(); load(); }, 7200000);
     sel.value = keep ? want : 'selected'; if (!sel.__numaLs) { sel.__numaLs = 1; sel.addEventListener('change', function () { try { sessionStorage.setItem('numaDiv', sel.value); } catch (e) { } }); }
     if (sel.value !== cur && sel.onchange) sel.onchange();
   }
-  function ui() { numaStyle();
+  function ui() { numaStyle(); ensureGlPicker();
 ensureTabs();
 if (VIEW === 'summary') { renderSummary(); return; }
 fillSelect();
@@ -1346,35 +1457,59 @@ function icInRange(code) {
       });
       return plan;
   }
+  // Every entity is read next to the others and the table is drawn again the
+  // moment one of them arrives, so the quick entities are already on the
+  // screen while the slower ones are still being read.
   async function runIC() {
-      var btn = document.getElementById('icRun'); var ENT = ICENT;
-      var status = document.getElementById('icStatus');
-      if (btn) btn.disabled = true;
-      var matrix = {};
-      var unmatchedAll = []; var other = {}; var oNotes = {};
-      var errors = [];
+    var btn = document.getElementById('icRun'); var ENT = ICENT;
+    var status = document.getElementById('icStatus');
+    if (btn) btn.disabled = true;
+    var res = new Array(ENT.length);
+    var nextIC = 0, doneIC = 0;
+    function icInfo() {
+      if (!window.NUMA_INFO) { return; }
+      var inn = [], out = [];
+      for (var k = 0; k < ENT.length; k++) { (res[k] ? inn : out).push(ENT[k][1]); }
+      window.NUMA_INFO.set({ loaded: inn, pending: out });
+    }
+    function icPaint() {
+      var matrix = {}; var unmatchedAll = []; var other = {}; var oNotes = {}; var errors = [];
       for (var i = 0; i < ENT.length; i++) {
-            var m = ENT[i];
-            if (status) status.textContent = 'Reading ' + m[1] + ' - ' + m[3] + ' (' + (i + 1) + '/' + ENT.length + ')...';
-            var res = await icFetchOne(m);
-            if (res.error) { errors.push(m[1] + ': ' + res.error); continue; }
-            matrix[m[1]] = matrix[m[1]] || {};
-            (function (m, accounts) {
-                    accounts.forEach(function (a) {
-                              if (!icInRange(a.code)) return;
-                              var target = icMatch(a.description, m[1]);
-                              if (target) {
-                                          matrix[m[1]][target[1]] = (matrix[m[1]][target[1]] || 0) + a.amount;
-                              } else {
-                                          unmatchedAll.push({ source: m[1] + ' - ' + m[3], glCode: a.code, glDescription: a.description, amount: a.amount }); var __b = icBucket(a.code); other[m[1]] = other[m[1]] || {}; other[m[1]][__b] = (other[m[1]][__b] || 0) + a.amount; oNotes[m[1]] = oNotes[m[1]] || {}; oNotes[m[1]][__b] = oNotes[m[1]][__b] || []; oNotes[m[1]][__b].push(a.code + ' ' + a.description);
-                              }
-                    });
-            })(m, res.accounts);
-            await nap(150);
+        var m = ENT[i]; var r = res[i];
+        if (!r) { continue; }
+        if (r.error) { errors.push(m[1] + ': ' + r.error); continue; }
+        matrix[m[1]] = matrix[m[1]] || {};
+        (function (m, accounts) {
+          accounts.forEach(function (a) {
+            if (!icInRange(a.code)) return;
+            var target = icMatch(a.description, m[1]);
+            if (target) {
+              matrix[m[1]][target[1]] = (matrix[m[1]][target[1]] || 0) + a.amount;
+            } else {
+              unmatchedAll.push({ source: m[1] + ' - ' + m[3], glCode: a.code, glDescription: a.description, amount: a.amount }); var __b = icBucket(a.code); other[m[1]] = other[m[1]] || {}; other[m[1]][__b] = (other[m[1]][__b] || 0) + a.amount; oNotes[m[1]] = oNotes[m[1]] || {}; oNotes[m[1]][__b] = oNotes[m[1]][__b] || []; oNotes[m[1]][__b].push(a.code + ' ' + a.description);
+            }
+          });
+        })(m, r.accounts || []);
       }
-      if (btn) btn.disabled = false;
-      if (status) status.textContent = 'Done.' + (errors.length ? (' ' + errors.length + ' errors.') : '');
+      if (status) { status.textContent = (doneIC < ENT.length) ? ('Reading live from Exact Online - ' + doneIC + ' of ' + ENT.length + ' entities ready. Every entity is shown the moment it arrives.') : ('Done.' + (errors.length ? (' ' + errors.length + ' errors.') : '')); }
       renderICTable(matrix, unmatchedAll, errors, other, oNotes);
+      icInfo();
+    }
+    icInfo();
+    async function icLane() {
+      for (;;) {
+        var q = nextIC++;
+        if (q >= ENT.length) { return; }
+        res[q] = await icFetchOne(ENT[q]);
+        doneIC = doneIC + 1;
+        icPaint();
+      }
+    }
+    var icLanes = [];
+    for (var w = 0; w < 8 && w < ENT.length; w++) { icLanes.push(icLane()); }
+    await Promise.all(icLanes);
+    if (btn) btn.disabled = false;
+    icPaint();
   }
   function icCellValue(rowMembers, colMembers, matrix) {
       var total = 0, any = false;
