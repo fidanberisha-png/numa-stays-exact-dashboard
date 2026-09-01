@@ -608,7 +608,18 @@ setInterval(function () { conn(); load(); }, 7200000);
       for (var i = 0; i < GLOPTS.length; i++) { if (GLOPTS[i].description.toLowerCase() === d.toLowerCase()) { f = GLOPTS[i]; break; } }
       if (!f) { f = { description: d, codes: [] }; GLOPTS.push(f); changed = true; }
       (o.codes || []).forEach(function (c) { c = String(c); if (c && f.codes.indexOf(c) < 0) { f.codes.push(c); changed = true; } });
+      if (o.nameOnly === false) { if (f.nameOnly !== false) { f.nameOnly = false; changed = true; } }
+      else if (o.nameOnly && f.nameOnly === undefined) { f.nameOnly = true; changed = true; }
     });
+    // The server says which accounts carry figures. A tick on an account that
+    // is only known by name would empty the report, so such a tick is dropped
+    // by itself and the report is read again.
+    var cur0 = glSel();
+    var keep0 = cur0.filter(function (d) {
+      for (var k = 0; k < GLOPTS.length; k++) { if (GLOPTS[k].description.toLowerCase() === String(d).toLowerCase()) { return !GLOPTS[k].nameOnly; } }
+      return true;
+    });
+    if (keep0.length !== cur0.length) { setGlSel(keep0); glApply(); return; }
     if (changed) { GLOPTS.sort(function (a, b) { return a.description.localeCompare(b.description); }); glPaint(); }
   }
   window.NUMA_GLADD = glAddOptions;
@@ -656,7 +667,7 @@ setInterval(function () { conn(); load(); }, 7200000);
     var p = document.getElementById('glPickPanel');
     if (!p || p.style.display === 'none') { return; }
     var sel = glSel();
-    var h = '<div style="font-size:11.5px;color:#6f6a6b;margin-bottom:8px">The payable G/L accounts of Exact Online. Nothing ticked means every account is counted. The accounts are held together by their description, so an account that carries another number in another entity is listed only once.</div>';
+    var h = '<div style="font-size:11.5px;color:#6f6a6b;margin-bottom:8px">The payable G/L accounts of Exact Online. Nothing ticked means every account is counted. The accounts are held together by their description, so an account that carries another number in another entity is listed only once. Figures are read for Trade accounts payable External and Accrued Expenses - AP; every other payable account is shown by name alone.</div>';
     h += '<div style="margin-bottom:8px"><button type="button" class="btn sec" id="glAll" style="padding:4px 9px;font-size:12px">Select all</button> <button type="button" class="btn sec" id="glNone" style="padding:4px 9px;font-size:12px">Clear (count all)</button></div>';
     if (!GLOPTS.length) { h += '<div style="font-size:12px;color:#6f6a6b">The list fills itself as soon as the first entity is read.</div>'; }
     // An account that is ticked but does not exist in the entity chosen now is
@@ -669,16 +680,17 @@ setInterval(function () { conn(); load(); }, 7200000);
     GLSHOW.forEach(function (o, i) {
       var on = sel.indexOf(o.description) > -1;
       h += '<label style="display:flex;gap:8px;align-items:flex-start;padding:4px 0;font-size:12.5px;cursor:pointer">'
-        + '<input type="checkbox" class="glOpt" data-i="' + i + '"' + (on ? ' checked' : '') + ' style="margin-top:2px">'
+        + '<input type="checkbox" class="glOpt" data-i="' + i + '"' + (on ? ' checked' : '') + (o.nameOnly ? ' disabled' : '') + ' style="margin-top:2px">'
         + '<span><b>' + esc(o.description) + '</b>'
         + (o.codes.length ? ('<span style="color:#6f6a6b"> - ' + esc(o.codes.slice(0, 8).join(', ')) + (o.codes.length > 8 ? ' ...' : '') + '</span>') : '')
         + (o.absent ? '<span style="color:#b0463a"> - not used by this entity</span>' : '')
+        + (o.nameOnly ? '<span style="color:#6f6a6b"> - name only, no figures</span>' : '')
         + '</span></label>';
     });
     p.innerHTML = h;
     var all = document.getElementById('glAll');
     var none = document.getElementById('glNone');
-    if (all) { all.onclick = function (ev) { ev.stopPropagation(); setGlSel(GLOPTS.map(function (o) { return o.description; })); glApply(); }; }
+    if (all) { all.onclick = function (ev) { ev.stopPropagation(); setGlSel(GLOPTS.filter(function (o) { return !o.nameOnly; }).map(function (o) { return o.description; })); glApply(); }; }
     if (none) { none.onclick = function (ev) { ev.stopPropagation(); setGlSel([]); glApply(); }; }
     [].slice.call(p.querySelectorAll('.glOpt')).forEach(function (c) {
       c.onclick = function (ev) { ev.stopPropagation(); };
