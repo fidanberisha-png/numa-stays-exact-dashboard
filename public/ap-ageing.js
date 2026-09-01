@@ -607,7 +607,10 @@ setInterval(function () { conn(); load(); }, 7200000);
       box.id = 'glPickWrap';
       box.style.position = 'relative';
       box.innerHTML = '<label>G/L ACCOUNTS</label><button type="button" class="btn sec" id="glPickBtn" style="white-space:nowrap"></button><div id="glPickPanel" style="display:none;position:absolute;top:100%;left:0;z-index:9998;margin-top:6px;width:440px;max-width:88vw;max-height:340px;overflow:auto;padding:10px 12px;border:1px solid #c7d5ef;border-radius:10px;background:#ffffff;box-shadow:0 10px 26px rgba(26,26,24,.18)"></div>';
-      controls.appendChild(box);
+      // The tick list stands next to the other filters, in front of the search
+      // box, so it sits where the eye already looks for a filter.
+      var grow = controls.querySelector('.ctl.grow');
+      if (grow) { controls.insertBefore(box, grow); } else { controls.appendChild(box); }
       document.getElementById('glPickBtn').onclick = function (ev) {
         ev.stopPropagation();
         var p = document.getElementById('glPickPanel');
