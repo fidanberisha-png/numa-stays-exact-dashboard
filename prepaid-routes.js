@@ -326,10 +326,30 @@ module.exports = function (getToken) {
         const sel = 'EntryNumber,GLAccountCode,GLAccountDescription,AmountDC,CostCenter,CostCenterDescription,CostUnit,CostUnitDescription,YourRef,InvoiceNumber,AccountName';
         const out = {};
         const keys = Object.keys(spans);
+        // The spans are read next to each other instead of one after the other. Exact
+        // Online counts its limit per entity, and every span used to wait for the one
+        // before it, which is what made a large entity take minutes.
+        const spanRows = new Array(keys.length);
+        let spanErr = null;
+        let nextSpan = 0;
+        async function spanLane() {
+            for (;;) {
+                const si = nextSpan++;
+                if (si >= keys.length) return;
+                const sp = spans[keys[si]];
+                const ff = (sp.year ? 'FinancialYear eq ' + sp.year + ' and ' : '') + 'EntryNumber ge ' + sp.min + ' and EntryNumber le ' + sp.max;
+                try { spanRows[si] = await fetchAll(division, 'bulk/Financial/TransactionLines?$select=' + sel + '&$filter=' + ff, h, 60); }
+                catch (e) { if (!spanErr) spanErr = e; spanRows[si] = []; }
+            }
+        }
+        const spanLanes = [];
+        for (let i = 0; i < Math.min(5, keys.length); i++) { spanLanes.push(spanLane()); }
+        await Promise.all(spanLanes);
+        if (spanErr) throw spanErr;
         for (let i = 0; i < keys.length; i++) {
             const s = spans[keys[i]];
             const f = (s.year ? 'FinancialYear eq ' + s.year + ' and ' : '') + 'EntryNumber ge ' + s.min + ' and EntryNumber le ' + s.max;
-            const rs = await fetchAll(division, 'bulk/Financial/TransactionLines?$select=' + sel + '&$filter=' + f, h, 60);
+            const rs = spanRows[i] || [];
             rs.forEach(function (r) {
                 const n = Number(r.EntryNumber) || 0;
                 if (!n) return;
@@ -665,7 +685,7 @@ module.exports = function (getToken) {
     // summary that is opened afterwards is answered from memory.
     const WARM_START_MS = 45000;
     const WARM_EVERY_MS = 20 * 60 * 1000;
-    const WARM_LANES = 4;
+    const WARM_LANES = 6;
     const WARM_CODES = [3784237, 3745758, 3745759, 3745760, 3745740, 3751399, 3708480, 3642741, 2657065, 3383979, 3693157, 3706020, 3716405, 3741441, 3717706, 3900740, 3725452, 3732987, 3745729];
     let warmRunning = false;
     let warmInfo = { at: null, done: 0, total: 0, ms: 0 };
