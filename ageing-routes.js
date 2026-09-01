@@ -733,6 +733,49 @@ module.exports = function (getToken) {
   }
   return res.status(502).json({ error: 'no source worked', errors: errors });
   });
+  // Diagnostic: which payable G/L account every open item of one supplier is
+  // counted on, and where that answer comes from. Read only, so the figures of
+  // the dashboard can be checked against the ageing analysis of Exact Online.
+  router.get('/api/ageing-gl', async function (req, res) {
+    const h = headers();
+    if (!h) return res.status(401).json({ error: 'Not authenticated' });
+    const division = req.query.division ? String(req.query.division) : null;
+    if (!division) return res.status(400).json({ error: 'division is required' });
+    try {
+      if (req.query.entry) {
+        const sel = '$select=EntryNumber,GLAccountCode,GLAccountDescription,AccountCode,AmountDC,Date,JournalCode,Description';
+        const one = parseInt(String(req.query.entry), 10) || 0;
+        const lines = await readLines(division, 'bulk/Financial/TransactionLines?' + sel + '&$filter=EntryNumber eq ' + one, h);
+        return res.json({ entry: one, count: lines.length, lines: lines });
+      }
+      const gi = await apGlInfo(division, h);
+      const rows = await fetchAll(division, AP_SOURCES[0], h, 600, 40000);
+      const code = String(req.query.code || '').trim();
+      const out = [];
+      let seen = 0;
+      rows.forEach(function (row) {
+        const ac = String(row.AccountCode === undefined || row.AccountCode === null ? '' : row.AccountCode).trim();
+        if (code && ac !== code) { return; }
+        seen = seen + 1;
+        if (out.length >= 400) { return; }
+        const en = String(row.EntryNumber === undefined || row.EntryNumber === null ? '' : row.EntryNumber).trim();
+        const ga = glOfRow(row, gi);
+        const pk = en + '|' + ac;
+        out.push({
+          account: ac, entry: en, journal: String(row.JournalCode || ''),
+          invoice: String(row.InvoiceNumber || ''), date: iso(toDate(row.InvoiceDate) || toDate(row.Date)),
+          due: iso(toDate(row.DueDate)), amount: num(row.Amount), currency: String(row.CurrencyCode || ''),
+          gl: ga ? ga.code : null, glName: ga ? ga.description : null,
+          pair: gi.byPair[pk] ? gi.byPair[pk].code : null,
+          entryGl: gi.byEntry[en] ? gi.byEntry[en].code : null,
+          tried: gi.entryTried[en] ? 1 : 0
+        });
+      });
+      res.json({ division: division, code: code, rows: seen, shown: out.length, resolving: gi.resolving || 0, stat: gi.stat, accounts: gi.accounts, journals: gi.byJournal, items: out });
+    } catch (e) {
+      res.status(500).json({ error: 'failed', details: e.message });
+    }
+  });
   router.get('/api/ageing-ap', function (req, res) { return handleAgeing(req, res, { sources: AP_SOURCES, edges: AP_EDGES, gl: [], withGl: true }); });
   router.get('/api/ageing-ar', function (req, res) { return handleAgeing(req, res, { sources: AR_SOURCES, edges: AR_EDGES, gl: [] }); });
   // ---- Keeping the numbers warm ------------------------------------------
