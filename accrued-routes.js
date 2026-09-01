@@ -84,7 +84,7 @@ module.exports = function (getToken) {
         let last = null;
         for (let i = 0; i < n; i++) {
             try {
-                return await axios.get(url, { headers: h, timeout: 30000 });
+                return await axios.get(url, { headers: h, timeout: 120000 });
             } catch (e) {
                 last = e;
                 if (e.response && e.response.status === 429 && e.response.headers) {
@@ -167,13 +167,22 @@ module.exports = function (getToken) {
         const o = opts || {};
         const P1 = 'financialtransaction/TransactionLines';
         const P2 = 'bulk/Financial/TransactionLines';
-        const small = [
+        // The summary needs no more than the small set of fields, and every extra
+        // variant that Exact refuses costs a whole timeout, so those reads ask for
+        // the small set only.
+        const small = o.minOnly ? [
+            P1 + '?$filter=' + filter + '&$select=' + SELECT_MIN,
+            P1 + '?$filter=' + filter
+        ] : [
             P1 + '?$filter=' + filter + '&$orderby=' + orderby + '&$select=' + SELECT_FULL,
             P1 + '?$filter=' + filter + '&$select=' + SELECT_FULL,
             P1 + '?$filter=' + filter + '&$select=' + SELECT_MIN,
             P1 + '?$filter=' + filter
         ];
-        const bulk = [
+        const bulk = o.minOnly ? [
+            P2 + '?$filter=' + filter + '&$select=' + SELECT_MIN,
+            P2 + '?$filter=' + filter
+        ] : [
             P2 + '?$filter=' + filter + '&$select=' + SELECT_FULL,
             P2 + '?$filter=' + filter + '&$select=' + SELECT_MIN,
             P2 + '?$filter=' + filter
@@ -193,6 +202,41 @@ module.exports = function (getToken) {
             }
         }
         throw last;
+    }
+
+    // A whole financial year of one G/L account is a heavy scan for Exact Online,
+    // and a heavy scan is what runs into the timeout: the year of a large entity
+    // like 610 or 900 simply never came back and the screen waited for nothing.
+    // The year is therefore asked period by period. Seventeen small reads that run
+    // next to each other are far quicker than one big one, and if Exact does not
+    // like the period filter the whole year is still asked the old way.
+    async function fetchYearLines(division, year, code, h, meta, minOnly) {
+        const base = 'FinancialYear eq ' + year +
+            " and GLAccountCode ge '" + code + "' and GLAccountCode le '" + code + "zzzz'";
+        const parts = new Array(17);
+        let failed = null;
+        let next = 0;
+        async function lane() {
+            for (;;) {
+                if (failed) return;
+                const i = next++;
+                if (i > 16) return;
+                const m = {};
+                try {
+                    parts[i] = await fetchLines(division, base + ' and FinancialPeriod eq ' + i, 'EntryNumber', h, { bulkFirst: true, maxPages: 100, meta: m, minOnly: minOnly });
+                    if (m.truncated && meta) meta.truncated = true;
+                } catch (e) { failed = e; }
+            }
+        }
+        const lanes = [];
+        for (let i = 0; i < 6; i++) { lanes.push(lane()); }
+        await Promise.all(lanes);
+        if (!failed) {
+            let all = [];
+            for (let i = 0; i < parts.length; i++) { if (parts[i] && parts[i].length) { all = all.concat(parts[i]); } }
+            return all;
+        }
+        return await fetchLines(division, base, 'Date,EntryNumber', h, { bulkFirst: true, maxPages: 400, meta: meta || {}, minOnly: minOnly });
     }
 
     function txt(v) { return (v === null || v === undefined) ? '' : String(v).trim(); }
@@ -278,7 +322,7 @@ module.exports = function (getToken) {
         try {
             const filter = 'FinancialYear eq ' + year +
                 " and GLAccountCode ge '" + code + "' and GLAccountCode le '" + code + "zzzz'";
-            const rows = await fetchLines(division, filter, 'Date,EntryNumber', h, { bulkFirst: true, maxPages: 400 });
+            const rows = await fetchYearLines(division, year, code, h, null, false);
             const lines = rows.map(mapLine).filter(function (l) { return l.glCode === code; });
             return sendCached(res, ckey, {
                 division: division,
@@ -326,7 +370,7 @@ module.exports = function (getToken) {
                 const filter = 'FinancialYear eq ' + year +
                     " and GLAccountCode ge '" + code + "' and GLAccountCode le '" + code + "zzzz'";
                 const baseMeta = {};
-                const raw = await fetchLines(division, filter, 'Date,EntryNumber', h, { bulkFirst: true, maxPages: 400, meta: baseMeta });
+                const raw = await fetchYearLines(division, year, code, h, baseMeta, true);
                 const base = raw.map(mapLine).filter(function (l) { return l.glCode === code; });
                 job.accrualLines = base.length;
                 job.gross = totalsOf(base);
