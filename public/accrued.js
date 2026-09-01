@@ -252,6 +252,17 @@
     var next = 0;
     var lastDraw = 0;
     var misses = [];
+    // The (i) next to the footer line says which entities are already on the
+    // screen and which ones are still being read out of Exact Online.
+    var EDONE = {};
+    var PERENT = Math.max(1, ys.length * cs.length);
+    function mainInfo() {
+      if (!window.NUMA_INFO) { return; }
+      var inn = [], out = [];
+      list.forEach(function (m) { ((EDONE[m[1]] || 0) >= PERENT ? inn : out).push(m[1]); });
+      window.NUMA_INFO.set({ loaded: inn, pending: out });
+    }
+    mainInfo();
     function absorb(m, y, c, j) {
       if (j.error) { if (!/no requests left today|429/.test(String(j.error))) misses.push([m, y, c]); S.errors.push(m[1] + ' ' + y + ' ' + c + ': ' + j.error); return; }
             if (j.accountTotals) { if (!S.gross) S.gross = { d: 0, c: 0 }; S.gross.d += (Number(j.accountTotals.debit) || 0); S.gross.c += (Number(j.accountTotals.credit) || 0); }
@@ -266,13 +277,14 @@
       var now = Date.now();
       if (now - lastDraw < 400) return;
       lastDraw = now;
+      mainInfo();
       draw();
     }
     async function lane() {
       while (next < jobs.length) {
         var jb = jobs[next++];
         var j = (S.view === 'summary') ? await fetchSum(jb[0][2], jb[1], fresh, jb[2]) : await fetchOne(jb[0][2], jb[1], fresh, jb[2]);
-        S.done++;
+        S.done++; EDONE[jb[0][1]] = (EDONE[jb[0][1]] || 0) + 1;
         absorb(jb[0], jb[1], jb[2], j);
         setStatus('Loading ' + S.done + ' of ' + S.total + ' (year and account)' + (S.errors.length ? ' - ' + S.errors.length + ' failed' : ''));
         tick();
@@ -295,6 +307,7 @@
         tick();
       }
     }
+      mainInfo();
     S.busy = false;
     setStatus('');
     draw();
