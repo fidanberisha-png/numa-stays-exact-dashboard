@@ -130,7 +130,19 @@
       var j={}; try{ j=await r.json(); }catch(_){}
       return { ok:r.ok, j:j };
     }
-    for(var i=0;i<ENT.length;i++){
+// Every entity is read next to the others and lands on the screen the moment
+// it arrives, so the quick ones are already shown while a heavy one is still
+// being read. The (i) under the table says which ones are in and which not.
+var slots = new Array(ENT.length);
+function sumInfo(){
+  if(!window.NUMA_INFO) return;
+  var inn=[], out=[];
+  for(var k=0;k<ENT.length;k++){ (slots[k]?inn:out).push(ENT[k][1]); }
+  window.NUMA_INFO.set({ loaded:inn, pending:out });
+}
+sumInfo();
+var nextEnt = 0;
+async function oneEnt(i){
       var e=ENT[i]; var dv=e[2];
       var entRow={ code:e[1], name:e[3], months:{}, total:0 };
       try{
@@ -154,10 +166,18 @@
           });
         }
       }catch(err){}
-      SUM.rows.push(entRow);
-      SUM.progress=i+1;
-      drawSummary();
-    }
+slots[i]=entRow;
+SUM.rows=slots.filter(function(x){ return !!x; });
+SUM.progress=SUM.rows.length;
+drawSummary();
+sumInfo();
+}
+async function entLane(){ for(;;){ var q=nextEnt++; if(q>=ENT.length) return; await oneEnt(q); } }
+var entRunners=[];
+for(var w=0; w<20 && w<ENT.length; w++){ entRunners.push(entLane()); }
+await Promise.all(entRunners);
+SUM.rows=slots.filter(function(x){ return !!x; });
+sumInfo();
     SUM.busy=false;
     drawSummary();
   }
