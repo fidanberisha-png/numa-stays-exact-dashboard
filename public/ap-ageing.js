@@ -902,7 +902,7 @@ f.style.fontWeight = '700';
 }
 var cards = [].slice.call(document.querySelectorAll('#kpis .kpi'));
 if (cards.length === keys.length + 1) {
-var ent = (sel && sel.value === 'selected') ? (ENT.length + ' entities') : ((sel && sel.selectedOptions[0]) ? sel.selectedOptions[0].text : '1 entity');
+var ent = (sel && sel.value === 'selected') ? (pickedEnt().length + ' entities') : ((sel && sel.selectedOptions[0]) ? sel.selectedOptions[0].text : '1 entity');
 cards.forEach(function (k, i) {
 var bar = k.querySelector('.bar');
 if (bar) bar.remove();
@@ -1138,7 +1138,7 @@ var one = isAP ? 'Vendor' : 'Customer';
 var BK = BKS();
 var keys = bkeys();
 var by = (el('referto') && el('referto').value === 'duedate') ? 'due date' : 'invoice date';
-var title = 'Ageing analysis: ' + (isAP ? 'A/P' : 'A/R') + ' - consolidated summary of ' + ENT.length + ' entities';
+var title = 'Ageing analysis: ' + (isAP ? 'A/P' : 'A/R') + ' - consolidated summary of ' + pickedEnt().length + ' entities';
 var line2 = 'Reference date ' + xDate() + ' - aged by ' + by + ' - all amounts converted to EUR';
 var line3 = 'Exported from the Numa dashboard on ' + new Date().toLocaleString('nb-NO') + ' - live data of Exact Online';
 var head = ['Entity', 'Entity name', 'Region', who];
@@ -1178,7 +1178,7 @@ det.push(dr);
 });
 var g = totalsOf(acc);
 function totRow() {
-var r = [{ v: 'TOTAL', s: 4 }, { v: ENT.length + ' entities', s: 4 }, { v: '', s: 4 }, { n: acc.length, s: 4 }];
+var r = [{ v: 'TOTAL', s: 4 }, { v: pickedEnt().length + ' entities', s: 4 }, { v: '', s: 4 }, { n: acc.length, s: 4 }];
 keys.forEach(function (k) { r.push({ n: g[k], s: 3 }); });
 r.push({ n: g.total, s: 3 });
 r.push({ n: g.average || 0, s: 4 });
@@ -1203,7 +1203,7 @@ return AMT === 'all' || (AMT === 'pos' ? t >= 0 : t < 0);
 });
 var by = (el('referto') && el('referto').value === 'duedate') ? 'due date' : 'invoice date';
 var selEl = document.getElementById('company');
-var scope = (selEl && selEl.value === 'selected') ? ('all ' + ENT.length + ' entities') : ((selEl && selEl.selectedOptions[0]) ? selEl.selectedOptions[0].text : 'one entity');
+var scope = (selEl && selEl.value === 'selected') ? ('all ' + pickedEnt().length + ' entities') : ((selEl && selEl.selectedOptions[0]) ? selEl.selectedOptions[0].text : 'one entity');
 var title = 'Ageing analysis: ' + (isAP ? 'A/P' : 'A/R') + ' - details of ' + scope;
 var head = isAP ? ['Code', 'Entity Name', 'Entity Code', one, ] : ['Code', 'Entity', one, ];
 BK.forEach(function (b) { head.push(b.label); });
@@ -1414,7 +1414,7 @@ var m = null;
 for (var k = 0; k < ENT.length; k++) { if (ENT[k][1] === ACTIVE_ENT) { m = ENT[k]; break; } }
 entLabel = m ? (m[1] + ' - ' + m[3]) : String(ACTIVE_ENT);
 } else {
-entLabel = ENT.length + ' entities';
+entLabel = pickedEnt().length + ' entities';
 }
 if (sub) sub.textContent = entLabel + ' \u00b7 ' + list.length + ' ' + who;
 } else {
