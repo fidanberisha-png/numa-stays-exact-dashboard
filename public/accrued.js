@@ -635,7 +635,7 @@
       var row = { code: e[1], name: e[3], months: {}, total: 0 };
       try {
         var res = await fetchOne(dv);
-        if (!res.ok || !res.j || !res.j.rows) { await s1Wait(900); res = await fetchOne(dv); }
+        var s1Attempts=1; while((!res.ok || !res.j || res.j.partial || !res.j.rows) && s1Attempts<60){ await s1Wait(1500); res = await fetchOne(dv); s1Attempts+=1; }
         if (res.ok && res.j && res.j.rows) {
           res.j.rows.forEach(function (r0) {
             var st = s1ParseDMY(r0.start), en = s1ParseDMY(r0.end);
