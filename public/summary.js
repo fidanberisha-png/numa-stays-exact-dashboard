@@ -146,8 +146,7 @@ async function oneEnt(i){
       var e=ENT[i]; var dv=e[2];
       var entRow={ code:e[1], name:e[3], months:{}, total:0 };
       try{
-        var res=await fetchOne(dv);
-        if(!res.ok || !res.j || !res.j.rows){ res=await fetchOne(dv); }
+        var res=await fetchOne(dv); var attempts=1; while((!res.ok || !res.j || res.j.partial || !res.j.rows) && attempts<60){ await new Promise(function(r2){ setTimeout(r2,1500); }); res=await fetchOne(dv); attempts+=1; }
         if(res.ok && res.j && res.j.rows){
           res.j.rows.forEach(function(row){
             var st=parseDMY(row.start), en=parseDMY(row.end);
