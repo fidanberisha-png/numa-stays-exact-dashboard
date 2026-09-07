@@ -391,42 +391,7 @@
     }
   }
 
-  async function run() {
-    if (S.busy) return;
-    if (!S.entity) { setState('Choose an entity first'); return; }
-    var dv = division(S.entity);
-    if (!dv) { setState('This entity has no division number'); return; }
-    S.busy = true; S.err = '';
-    setState('Reading the prepaid lines of ' + entName(S.entity) + ' out of Exact Online, this can take a moment...');
-    var until = (S.cut === 'date') ? (S.cutDate || 'year') : S.cut;
-    var url = '/api/prepaid/schedule?division=' + encodeURIComponent(dv) +
-      '&year=' + encodeURIComponent(S.year) +
-      '&code=' + encodeURIComponent(CODE) +
-      '&journal=' + encodeURIComponent(S.journal) +
-      '&mode=' + encodeURIComponent(S.mode) +
-      '&until=' + encodeURIComponent(until) +
-      (S.fresh ? '&fresh=1' : '');
-    try {
-      var r = await fetch(url, { credentials: 'same-origin' });
-      var j = null;
-      try { j = await r.json(); } catch (e2) { j = {}; }
-      if (!r.ok) {
-        S.data = null;
-        S.err = (r.status === 401)
-          ? 'Not connected to Exact Online. Press Connect Exact Online in the top right and try again.'
-          : (j.error || ('Exact answered with status ' + r.status));
-      } else {
-        S.data = j;
-      }
-    } catch (e) {
-      S.data = null;
-      S.err = 'The server did not answer: ' + String(e.message || e);
-    }
-    S.busy = false; S.fresh = false;
-    fillJournals();
-    draw();
-    conn();
-  }
+async function run() { if (S.busy) return; if (!S.entity) { setState('Choose an entity first'); return; } var dv = division(S.entity); if (!dv) { setState('This entity has no division number'); return; } S.busy = true; S.err = ''; setState('Reading the prepaid lines of ' + entName(S.entity) + ' out of Exact Online, this can take a moment...'); var until = (S.cut === 'date') ? (S.cutDate || 'year') : S.cut; var url = '/api/prepaid/schedule?division=' + encodeURIComponent(dv) + '&year=' + encodeURIComponent(S.year) + '&code=' + encodeURIComponent(CODE) + '&journal=' + encodeURIComponent(S.journal) + '&mode=' + encodeURIComponent(S.mode) + '&until=' + encodeURIComponent(until) + (S.fresh ? '&fresh=1' : ''); try { var attempts = 0; var j = null, r = null; while (true) { attempts += 1; r = await fetch(url, { credentials: 'same-origin' }); j = null; try { j = await r.json(); } catch (e2) { j = {}; } if (r.ok && j && j.partial && attempts < 200) { setState('Reading the prepaid lines of ' + entName(S.entity) + ' out of Exact Online, this can take a moment... (' + attempts + ')'); await new Promise(function (res) { setTimeout(res, 1500); }); continue; } break; } if (!r.ok) { S.data = null; S.err = (r.status === 401) ? 'Not connected to Exact Online. Press Connect Exact Online in the top right and try again.' : (j.error || ('Exact answered with status ' + r.status)); } else { S.data = j; } } catch (e) { S.data = null; S.err = 'The server did not answer: ' + String(e.message || e); } S.busy = false; S.fresh = false; fillJournals(); draw(); conn(); }
 
   function fillJournals() {
     var sel = el('journal');
