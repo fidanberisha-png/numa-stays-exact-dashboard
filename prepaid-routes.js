@@ -244,6 +244,7 @@ function noteRefusal(division, e) {
         };
     }
 
+const RESUME = new Map(); const RESUME_TTL = 20 * 60 * 1000; function pruneResume() { const cutoff = Date.now() - RESUME_TTL; RESUME.forEach(function (v, k) { if (!v.at || v.at < cutoff) { RESUME.delete(k); } }); } async function linesResumable(rkey, division, filter, h, budgetMs) { pruneResume(); let st = RESUME.get(rkey); if (!st) { st = { variant: 0, url: null, rows: [], at: Date.now() }; RESUME.set(rkey, st); } st.at = Date.now(); const tries = ["bulk/Financial/TransactionLines?$select=" + SEL + "&$filter=" + filter, "bulk/Financial/TransactionLines?$select=" + SEL_MIN + "&$filter=" + filter, "financialtransaction/TransactionLines?$select=" + SEL_MIN + "&$filter=" + filter]; const deadline = Date.now() + budgetMs; while (st.variant < tries.length) { let url = st.url || (BASE + "/" + division + "/" + tries[st.variant]); try { while (url) { if (Date.now() > deadline) { st.url = url; return { rows: st.rows, done: false }; } const r = await getEx(url, h); const d = (r.data && r.data.d) ? r.data.d : {}; const rows = d.results || (Array.isArray(d) ? d : []); rows.forEach(function (x) { st.rows.push(x); }); url = d.__next || null; st.url = url; } RESUME.delete(rkey); return { rows: st.rows, done: true }; } catch (e) { const status = (e.response && e.response.status) || 0; if (status === 401 || status === 403 || e.blocked) { RESUME.delete(rkey); throw e; } st.variant = st.variant + 1; st.url = null; if (st.variant >= tries.length) { RESUME.delete(rkey); throw e; } } } RESUME.delete(rkey); throw new Error("Could not read the transaction lines of this entity"); }    
     // Exact is picky about the select on transaction lines, so the full select is
     // asked first and a smaller one after that.
     async function lines(division, filter, h) {
@@ -465,7 +466,7 @@ function noteRefusal(division, e) {
         try {
             const glWhere = codeList.map(function (c) { return "(GLAccountCode ge '" + c + "' and GLAccountCode le '" + c + "zzzz')"; }).join(' or ');
             const filter = (year ? 'FinancialYear eq ' + year + ' and ' : '') + '(' + glWhere + ')';
-            const raw = await lines(division, filter, h);
+            const rkey = 'plraw|' + division + '|' + filter; const rr = await linesResumable(rkey, division, filter, h, 20000); if (!rr.done) { return res.json({ partial: true, loading: { done: rr.rows.length, total: 0 } }); } const raw = rr.rows;
             const all = raw.map(mapLine).filter(function (l) { return l.amount !== 0; });
 
             // What every journal holds, counted before anything is left out.
@@ -699,16 +700,7 @@ function noteRefusal(division, e) {
     const WARM_CODES = [3784237, 3745758, 3745759, 3745760, 3745740, 3751399, 3708480, 3642741, 2657065, 3383979, 3693157, 3706020, 3716405, 3741441, 3717706, 3900740, 3725452, 3732987, 3745729];
     let warmRunning = false;
     let warmInfo = { at: null, done: 0, total: 0, ms: 0 };
-    function warmOne(kind, division) {
-        return new Promise(function (resolve) {
-            let settled = false;
-            function finish() { if (!settled) { settled = true; resolve(); } }
-            const req = { query: { division: String(division), code: '160100', journal: 'all', mode: 'period', until: 'year', fresh: '1' } };
-            const res = { status: function () { return res; }, json: function () { finish(); return res; } };
-            try { scheduleRoute(req, res, { kind: kind }).then(finish, finish); }
-            catch (e) { finish(); }
-        });
-    }
+    function warmOne(kind, division) { return new Promise(function (resolve) { const req = { query: { division: String(division), code: '160100', journal: 'all', mode: 'period', until: 'year', fresh: '1' } }; let attempts = 0; function attempt() { attempts += 1; let settled = false; function finish(body) { if (settled) return; settled = true; if (body && body.partial && attempts < 40) { setTimeout(attempt, 1500); } else { resolve(); } } const res = { status: function () { return res; }, json: function (body) { finish(body); return res; } }; try { scheduleRoute(req, res, { kind: kind }).then(function () { finish(); }, function () { finish(); }); } catch (e) { finish(); } } attempt(); }); }
     async function warmAll() {
         if (warmRunning) return;
         if (!headers()) return;
