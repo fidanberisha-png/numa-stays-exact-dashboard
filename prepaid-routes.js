@@ -244,7 +244,84 @@ function noteRefusal(division, e) {
         };
     }
 
-const RESUME = new Map(); const RESUME_TTL = 20 * 60 * 1000; function pruneResume() { const cutoff = Date.now() - RESUME_TTL; RESUME.forEach(function (v, k) { if (!v.at || v.at < cutoff) { RESUME.delete(k); } }); } async function linesResumable(rkey, division, filter, h, budgetMs) { pruneResume(); let st = RESUME.get(rkey); if (!st) { st = { variant: 0, url: null, rows: [], at: Date.now() }; RESUME.set(rkey, st); } st.at = Date.now(); const tries = ["bulk/Financial/TransactionLines?$select=" + SEL + "&$filter=" + filter, "bulk/Financial/TransactionLines?$select=" + SEL_MIN + "&$filter=" + filter, "financialtransaction/TransactionLines?$select=" + SEL_MIN + "&$filter=" + filter]; const deadline = Date.now() + budgetMs; while (st.variant < tries.length) { let url = st.url || (BASE + "/" + division + "/" + tries[st.variant]); try { while (url) { if (Date.now() > deadline) { st.url = url; return { rows: st.rows, done: false }; } const r = await getEx(url, h); const d = (r.data && r.data.d) ? r.data.d : {}; const rows = d.results || (Array.isArray(d) ? d : []); rows.forEach(function (x) { st.rows.push(x); }); url = d.__next || null; st.url = url; } RESUME.delete(rkey); return { rows: st.rows, done: true }; } catch (e) { const status = (e.response && e.response.status) || 0; if (status === 401 || status === 403 || e.blocked) { RESUME.delete(rkey); throw e; } st.variant = st.variant + 1; st.url = null; if (st.variant >= tries.length) { RESUME.delete(rkey); throw e; } } } RESUME.delete(rkey); throw new Error("Could not read the transaction lines of this entity"); }    
+    // A resumable read hands a big Exact query back in slices of a few seconds,
+    // and the state of such a read waits here for the next poll of the dashboard.
+    // It is kept on a short leash on purpose: the container has a small heap and a
+    // read that is left behind (a closed tab, a warm round that gave up) used to
+    // hold on to every line it had already read until the platform aborted the
+    // process (exit 134).
+    const RESUME = new Map();
+    const RESUME_TTL = 5 * 60 * 1000;
+    const RESUME_MAX_ENTRIES = 6;
+    const RESUME_MAX_ROWS = 200000;
+    function resumeDrop(key) {
+        const st = RESUME.get(key);
+        if (st) { st.rows = []; st.url = null; }
+        RESUME.delete(key);
+    }
+    function pruneResume() {
+        const cutoff = Date.now() - RESUME_TTL;
+        const idle = [];
+        RESUME.forEach(function (v, k) {
+            if (v.busy) return;
+            if (!v.at || v.at < cutoff) { resumeDrop(k); return; }
+            idle.push([k, v.at]);
+        });
+        idle.sort(function (a, b) { return a[1] - b[1]; });
+        while (RESUME.size > RESUME_MAX_ENTRIES && idle.length) { resumeDrop(idle.shift()[0]); }
+    }
+    async function linesResumable(rkey, division, filter, h, budgetMs) {
+        pruneResume();
+        let st = RESUME.get(rkey);
+        if (!st) { st = { variant: 0, url: null, rows: [], at: Date.now(), busy: false }; RESUME.set(rkey, st); }
+        st.at = Date.now();
+        // One reader per read. Two readers on the same state (the dashboard next to
+        // the warm round, or two tabs) would page the same query into the same list:
+        // twice the lines, twice the memory and twice the amounts.
+        if (st.busy) { return { rows: [], done: false, busy: true }; }
+        st.busy = true;
+        const tries = ["bulk/Financial/TransactionLines?$select=" + SEL + "&$filter=" + filter, "bulk/Financial/TransactionLines?$select=" + SEL_MIN + "&$filter=" + filter, "financialtransaction/TransactionLines?$select=" + SEL_MIN + "&$filter=" + filter];
+        const deadline = Date.now() + budgetMs;
+        try {
+            while (st.variant < tries.length) {
+                let url = st.url || (BASE + "/" + division + "/" + tries[st.variant]);
+                try {
+                    while (url) {
+                        if (Date.now() > deadline) { st.url = url; st.at = Date.now(); return { rows: st.rows, done: false }; }
+                        const r = await getEx(url, h);
+                        const d = (r.data && r.data.d) ? r.data.d : {};
+                        const rows = d.results || (Array.isArray(d) ? d : []);
+                        rows.forEach(function (x) { st.rows.push(x); });
+                        url = d.__next || null;
+                        st.url = url;
+                        // The old one-shot read stopped after 200 pages. The resumable
+                        // read needs the same ceiling, otherwise a selection that is too
+                        // wide keeps paging until the heap is gone.
+                        if (st.rows.length > RESUME_MAX_ROWS) {
+                            const big = new Error('Exact returned more than ' + RESUME_MAX_ROWS + ' transaction lines for this selection. Choose a financial year or a single journal and read it again.');
+                            big.truncated = true;
+                            resumeDrop(rkey);
+                            throw big;
+                        }
+                    }
+                    const out = st.rows;
+                    resumeDrop(rkey);
+                    return { rows: out, done: true };
+                } catch (e) {
+                    const status = (e.response && e.response.status) || 0;
+                    if (status === 401 || status === 403 || e.blocked || e.truncated) { resumeDrop(rkey); throw e; }
+                    // A refused select starts the next variant at the first page, so the
+                    // lines that were read already are let go of first.
+                    st.variant = st.variant + 1;
+                    st.url = null;
+                    st.rows = [];
+                    if (st.variant >= tries.length) { resumeDrop(rkey); throw e; }
+                }
+            }
+            resumeDrop(rkey);
+            throw new Error("Could not read the transaction lines of this entity");
+        } finally { st.busy = false; }
+    }
     // Exact is picky about the select on transaction lines, so the full select is
     // asked first and a smaller one after that.
     async function lines(division, filter, h) {
