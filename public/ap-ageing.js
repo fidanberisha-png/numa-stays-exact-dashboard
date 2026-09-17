@@ -2084,7 +2084,7 @@ if (typeof loadDivisions === 'function') { setTimeout(function () { try { loadDi
     var q = ic2oVals();
     var url;
     if (opening) {
-      url = '/api/gl-balance?division=' + m[2] + '&balanceType=B&codeFrom=140000&codeTo=149999&yearTo=' + (q.yFrom - 1);
+      url = '/api/gl-balance?division=' + m[2] + '&balanceType=B&codeFrom=140000&codeTo=149999&yearFrom=' + (q.yFrom - 1) + '&yearTo=' + (q.yFrom - 1);
     } else {
       url = '/api/gl-balance?division=' + m[2] + '&balanceType=B&codeFrom=140000&codeTo=149999&yearFrom=' + q.yFrom + '&yearTo=' + q.yTo + '&periodFrom=' + q.pFrom + '&periodTo=' + q.pTo;
     }
