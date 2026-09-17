@@ -1998,3 +1998,248 @@ if (typeof loadDivisions === 'function') { setTimeout(function () { try { loadDi
     if (!on && document.body.classList.contains('numa-ic2')) { document.body.classList.remove('numa-ic2'); }
   }, 250);
 })();
+
+
+// InterCompany Version 2 - Opening balance + period movement + total.
+// This is an additive layer: it never touches the existing InterCompany or
+// the base IC2 code. It re-uses the SAME logic (G/L 140000-149999, BalanceType
+// B, the same lender/borrower matrix and the same name matching), but for every
+// entity it reads TWO figures from the very same /api/gl-balance endpoint:
+//   - Opening balance = the cumulative balance up to the end of the year before
+//     "Year from" (for 2026 that is everything through the end of 2025), asked
+//     with yearTo = (yearFrom - 1) and no period, exactly like Exact shows the
+//     2026 opening balance.
+//   - Period movement = the balance of the chosen year+period range (the base
+//     IC2 figure).
+// The table then shows, per row, Opening balance, Period movement and the Total
+// (opening + period), and a grand TOTAL that is opening +/- period, so the
+// closing amount that remains is shown next to the movement.
+(function () {
+  if (window.__numaIC2Open) { return; }
+  window.__numaIC2Open = 1;
+  var NFO = window.fetch;
+  function napo(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
+  var IC2OENT = [
+    ['HQ', 1000, 3784237, 'Numa Group SE'],
+    ['DACH', 900, 3745758, 'Numa Deutschland GmbH'],
+    ['DACH', 901, 3745759, 'COSI Hamburg Sud GmbH'],
+    ['DACH', 902, 3745760, 'COSI Koln Nord GmbH'],
+    ['DACH', 801, 3745740, 'Numa Osterreich GmbH'],
+    ['DACH', 500, 3751399, 'Numa Prague s.r.o.'],
+    ['DACH', 302, 3708480, 'Numa Schweiz GmbH'],
+    ['WEST', 99, 3642741, 'Numa Netherlands B.V.'],
+    ['WEST', 104, 2657065, 'Numa Nederland Operations B.V.'],
+    ['WEST', 400, 3383979, 'YAYS Frankrijklei B.V.'],
+    ['WEST', 401, 3693157, 'Numa Belgium North SRL'],
+    ['WEST', 300, 3706020, 'Numa Norge AS'],
+    ['WEST', 301, 3716405, 'numa Danmark ApS'],
+    ['WEST', 203, 3741441, 'NUMA France S.A.S.'],
+    ['WEST', 600, 3717706, 'numa stays UK Ltd'],
+    ['WEST', 610, 3900740, 'Native Places Limited'],
+    ['SOUTH', 700, 3725452, 'Numa Stays Espana S.L.'],
+    ['SOUTH', 710, 3732987, 'NUMA PORTUGAL, UNIPESSOAL, LDA.'],
+    ['SOUTH', 720, 3745729, 'Numa Italia S.r.l.'],
+    ['SOUTH', 711, 4166557, 'numa Lisbon South, unipessoal Lda']
+    ];
+  function ic2oNorm(s) {
+    return String(s || '').toLowerCase().replace(/[.,()]/g, ' ').replace(/\b(gmbh|ag|srl|s\.r\.o|sro|sas|s\.a\.s|sl|s\.l|bv|b\.v|ltd|limited|aps|lda|unipessoal|inc|corp|se|spa|s\.r\.l)\b/g, ' ').replace(/\s+/g, ' ').trim();
+  }
+  function ic2oTokens(s) { return ic2oNorm(s).split(' ').filter(function (w) { return w.length > 2; }); }
+  function ic2oMatch(description, selfHuman) {
+    var dTokens = ic2oTokens(description);
+    if (!dTokens.length) return null;
+    var best = null, bestScore = 0;
+    for (var i = 0; i < IC2OENT.length; i++) {
+      var e = IC2OENT[i];
+      if (e[1] === selfHuman) continue;
+      var eTokens = ic2oTokens(e[3]);
+      var score = 0;
+      for (var j = 0; j < eTokens.length; j++) { if (dTokens.indexOf(eTokens[j]) > -1) score++; }
+      if (score > bestScore) { bestScore = score; best = e; }
+    }
+    return bestScore > 0 ? best : null;
+  }
+  function ic2oInRange(code) {
+    var n = parseInt(String(code || '').replace(/[^0-9]/g, ''), 10);
+    return !isNaN(n) && n >= 140000 && n < 150000;
+  }
+  var IC2O_GROUP_ORDER = ['HQ', 'DACH', 'WEST', 'SOUTH'];
+  function ic2oGroups() { return IC2O_GROUP_ORDER.map(function (g) { return { name: g, members: IC2OENT.filter(function (e) { return e[0] === g; }) }; }); }
+  function ic2oRowPlan() {
+    var groups = ic2oGroups();
+    var plan = [];
+    groups.forEach(function (g, gi) {
+      g.members.forEach(function (e) { plan.push({ type: 'entity', e: e }); });
+      plan.push({ type: 'subtotal', name: g.name, members: g.members });
+      if (gi < groups.length - 1) plan.push({ type: 'blank' });
+    });
+    return plan;
+  }
+  function ic2oVals() {
+    function v(id, d) { var e = document.getElementById(id); var n = e ? parseInt(e.value, 10) : NaN; return isNaN(n) ? d : n; }
+    var nowY = new Date().getFullYear();
+    return { yFrom: v('ic2YearFrom', nowY), yTo: v('ic2YearTo', nowY), pFrom: v('ic2PerFrom', 1), pTo: v('ic2PerTo', 12) };
+  }
+  function ic2oFetch(m, opening) {
+    var q = ic2oVals();
+    var url;
+    if (opening) {
+      url = '/api/gl-balance?division=' + m[2] + '&balanceType=B&codeFrom=140000&codeTo=149999&yearTo=' + (q.yFrom - 1);
+    } else {
+      url = '/api/gl-balance?division=' + m[2] + '&balanceType=B&codeFrom=140000&codeTo=149999&yearFrom=' + q.yFrom + '&yearTo=' + q.yTo + '&periodFrom=' + q.pFrom + '&periodTo=' + q.pTo;
+    }
+    return NFO.call(window, url, { credentials: 'same-origin' }).then(function (r) {
+      return r.json().then(function (j) {
+        if (!r.ok || (j && j.error)) return { error: (j && j.error) || ('HTTP ' + r.status), accounts: [] };
+        return { accounts: (j && j.accounts) || [] };
+      });
+    }).catch(function (e) { return { error: String(e), accounts: [] }; });
+  }
+  function ic2oFetchBoth(m) {
+    return Promise.all([ic2oFetch(m, false), ic2oFetch(m, true)]).then(function (a) {
+      return { m: m, period: a[0], opening: a[1], error: (a[0].error || a[1].error) };
+    });
+  }
+  function ic2oFetchRetry(m) {
+    return ic2oFetchBoth(m).then(function (r) {
+      if (!r.error) return r;
+      return napo(1500).then(function () { return ic2oFetchBoth(m); }).then(function (r2) {
+        if (!r2.error) return r2;
+        return napo(1500).then(function () { return ic2oFetchBoth(m); });
+      });
+    });
+  }
+  // Sum, per source entity, of all matched intercompany receivables in a data set
+ // (period or opening). Returns a number, the entity's own total for that set.
+ function ic2oSum(accounts, selfHuman) {
+   var t = 0;
+   (accounts || []).forEach(function (a) {
+     if (!ic2oInRange(a.code)) return;
+     t += Number(a.amount) || 0;
+   });
+   return t;
+ }
+  function ic2oCellValue(rowMembers, colMembers, matrix) {
+    var total = 0, any = false;
+    rowMembers.forEach(function (r) {
+      colMembers.forEach(function (c) {
+        if (r[1] === c[1]) return;
+        var v = matrix[r[1]] ? matrix[r[1]][c[1]] : undefined;
+        if (v !== undefined) { total += v; any = true; }
+      });
+    });
+    return any ? total : undefined;
+  }
+  function ic2oCell(v, bold) {
+    if (v === undefined || v === null) return '<td class="num">-</td>';
+    var n = Number(v) || 0;
+    if (Math.abs(n) < 0.005) return '<td class="num">-</td>';
+    var color = n > 0 ? '#12a150' : '#e2611a';
+    var bg = n > 0 ? 'rgba(61,220,132,0.14)' : 'rgba(255,138,92,0.14)';
+    var fw = bold ? 'font-weight:700;' : '';
+    return '<td class="num" style="color:' + color + ';background:' + bg + ';' + fw + '">' + fmt(n) + '</td>';
+  }
+  function ic2oSumMembers(members, map) {
+    var t = 0, any = false;
+    members.forEach(function (m) { if (map[m[1]] !== undefined) { t += map[m[1]]; any = true; } });
+    return any ? t : undefined;
+  }
+  function renderIC2OTable(matrix, openMap, periodMap, errors) {
+    var out = document.getElementById('ic2Results');
+    if (!out) return;
+    var plan = ic2oRowPlan();
+    var q = ic2oVals();
+    var h = '<table><thead><tr><th class="txt">Lender / Borrower</th>';
+    plan.forEach(function (p) {
+      if (p.type === 'entity') { h += '<th class="num">' + esc(p.e[3]) + '</th>'; }
+      else if (p.type === 'subtotal') { h += '<th class="num" style="font-weight:700;">' + esc(p.name) + '</th>'; }
+      else { h += '<th class="num"></th>'; }
+    });
+    h += '<th class="num" style="font-weight:700;background:#eef2fb;">Opening balance ' + q.yFrom + '</th>';
+    h += '<th class="num" style="font-weight:700;background:#eef2fb;">Period movement P' + q.pFrom + '-P' + q.pTo + '</th>';
+    h += '<th class="num" style="font-weight:700;background:#dbe6ff;">Total (opening + period)</th>';
+    h += '</tr></thead><tbody>';
+    plan.forEach(function (rowP) {
+      if (rowP.type === 'blank') { h += '<tr><td colspan="' + (plan.length + 4) + '">&nbsp;</td></tr>'; return; }
+      if (rowP.type === 'entity') { h += '<tr><td>' + esc(rowP.e[1]) + ' - ' + esc(rowP.e[3]) + '</td>'; }
+      else { h += '<tr><td style="font-weight:700;">' + esc(rowP.name) + '</td>'; }
+      plan.forEach(function (colP) {
+        if (colP.type === 'blank') { h += '<td class="num"></td>'; return; }
+        var rowMembers = rowP.type === 'entity' ? [rowP.e] : rowP.members;
+        var colMembers = colP.type === 'entity' ? [colP.e] : colP.members;
+        if (rowP.type === 'entity' && colP.type === 'entity' && rowP.e[1] === colP.e[1]) { h += '<td class="num">-</td>'; return; }
+        var bold = rowP.type === 'subtotal' || colP.type === 'subtotal';
+        h += ic2oCell(ic2oCellValue(rowMembers, colMembers, matrix), bold);
+      });
+      var rm = rowP.type === 'entity' ? [rowP.e] : rowP.members;
+      var bd = rowP.type === 'subtotal';
+      var ob = ic2oSumMembers(rm, openMap);
+      var pm = ic2oSumMembers(rm, periodMap);
+      var tot;
+      if (ob === undefined && pm === undefined) { tot = undefined; } else { tot = (ob || 0) + (pm || 0); }
+      h += ic2oCell(ob, true);
+      h += ic2oCell(pm, bd);
+      h += ic2oCell(tot, true);
+      h += '</tr>';
+    });
+    // Grand total row across all entities.
+  var gOpen = 0, gPer = 0;
+    IC2OENT.forEach(function (m) { if (openMap[m[1]] !== undefined) gOpen += openMap[m[1]]; if (periodMap[m[1]] !== undefined) gPer += periodMap[m[1]]; });
+    h += '<tr><td colspan="' + (plan.length + 1) + '" style="text-align:right;font-weight:700;">GRAND TOTAL (all entities)</td>';
+    h += ic2oCell(gOpen, true);
+    h += ic2oCell(gPer, true);
+    h += ic2oCell(gOpen + gPer, true);
+    h += '</tr>';
+    h += '</tbody></table>';
+    if (errors && errors.length) { h += '<div class="note" style="margin-top:10px;color:#b45309;">Errors: ' + esc(errors.join(' | ')) + '</div>'; }
+    out.innerHTML = h;
+  }
+  function runIC2O() {
+    var btn = document.getElementById('ic2Run');
+    var status = document.getElementById('ic2Status');
+    if (btn) btn.disabled = true;
+    var res = new Array(IC2OENT.length);
+    var nextI = 0, doneI = 0;
+    function paint() {
+      var matrix = {}, openMap = {}, periodMap = {}, errors = [];
+      for (var i = 0; i < IC2OENT.length; i++) {
+        var m = IC2OENT[i], r = res[i];
+        if (!r) continue;
+        if (r.error) { errors.push(m[1] + ': ' + r.error); continue; }
+        matrix[m[1]] = matrix[m[1]] || {};
+        (function (m, accounts) {
+          accounts.forEach(function (a) {
+            if (!ic2oInRange(a.code)) return;
+            var target = ic2oMatch(a.description, m[1]);
+            if (target) { matrix[m[1]][target[1]] = (matrix[m[1]][target[1]] || 0) + a.amount; }
+          });
+        })(m, (r.period && r.period.accounts) || []);
+        periodMap[m[1]] = ic2oSum((r.period && r.period.accounts) || [], m[1]);
+        openMap[m[1]] = ic2oSum((r.opening && r.opening.accounts) || [], m[1]);
+      }
+      var q = ic2oVals();
+      var span = 'year ' + q.yFrom + ' P' + q.pFrom + ' to ' + q.yTo + ' P' + q.pTo + ' (opening = through end ' + (q.yFrom - 1) + ')';
+      if (status) { status.textContent = (doneI < IC2OENT.length) ? ('Reading live from Exact Online - ' + doneI + ' of ' + IC2OENT.length + ' entities ready (' + span + ').') : ('Done - ' + span + '.' + (errors.length ? (' ' + errors.length + ' errors.') : '')); }
+      renderIC2OTable(matrix, openMap, periodMap, errors);
+    }
+    function lane() {
+      var idx = nextI++;
+      if (idx >= IC2OENT.length) return Promise.resolve();
+      return ic2oFetchRetry(IC2OENT[idx]).then(function (r) { res[idx] = r; doneI = doneI + 1; paint(); return lane(); });
+    }
+    var lanes = [];
+    for (var w = 0; w < 8 && w < IC2OENT.length; w++) { lanes.push(lane()); }
+    Promise.all(lanes).then(function () { if (btn) btn.disabled = false; paint(); });
+  }
+  // Take over the Run button of the Version 2 tab so the enhanced report (with
+ // Opening balance + Period + Total) is the one that runs. The base IC2 wiring
+ // is left in place; only the click handler is re-pointed at runtime.
+ function ic2oHook() {
+   var btn = document.getElementById('ic2Run');
+   if (!btn) return;
+   if (btn.__ic2oHooked) return;
+   btn.__ic2oHooked = 1;
+   btn.onclick = function () { runIC2O(); };
+ }
+  setInterval(ic2oHook, 500);
+})();
