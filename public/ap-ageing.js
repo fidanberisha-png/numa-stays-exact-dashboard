@@ -1979,3 +1979,22 @@ if (typeof loadDivisions === 'function') { setTimeout(function () { try { loadDi
   var ic2Boot = setInterval(function () { if (ic2Wire(), document.getElementById('dashboard')) { ic2AddOption(); ic2Wire(); } }, 300);
   setTimeout(function () { clearInterval(ic2Boot); }, 12000);
 })();
+
+
+// InterCompany Version 2 - hard hide of the A/P pieces via a body class, so a
+// CSS !important rule wins over the 700ms A/P refresh that keeps re-showing
+// them. This never fights with JavaScript over inline display.
+(function () {
+  if (window.__numaIC2Css) { return; }
+  window.__numaIC2Css = 1;
+  var st = document.createElement('style');
+  st.id = 'numaIC2HideStyle';
+  st.textContent = 'body.numa-ic2 .controls,body.numa-ic2 .wrap,body.numa-ic2 #kpis,body.numa-ic2 #numaTabs,body.numa-ic2 #detTools,body.numa-ic2 #entPickWrap,body.numa-ic2 #summaryWrap,body.numa-ic2 #asof,body.numa-ic2 #note,body.numa-ic2 #sumTools,body.numa-ic2 #icWrap{display:none !important;}';
+  (document.head || document.documentElement).appendChild(st);
+  function isIC2() { var dd = document.getElementById('dashboard'); return !!(dd && dd.value === 'ic2'); }
+  setInterval(function () {
+    var on = isIC2();
+    if (on && !document.body.classList.contains('numa-ic2')) { document.body.classList.add('numa-ic2'); }
+    if (!on && document.body.classList.contains('numa-ic2')) { document.body.classList.remove('numa-ic2'); }
+  }, 250);
+})();
