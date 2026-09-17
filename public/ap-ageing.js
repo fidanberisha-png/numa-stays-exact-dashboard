@@ -1655,3 +1655,327 @@ if (typeof loadDivisions === 'function') { setTimeout(function () { try { loadDi
     if (typeof onDashboardChange === 'function') onDashboardChange(v);
   }, 900);
 })();
+
+
+// ===================================================================
+// InterCompany Version 2 - a separate dashboard tab, self-contained.
+// It uses the SAME logic as the InterCompany report (the very same G/L
+// range 140000-149999, BalanceType B, the same lender/borrower matrix and
+// the same matching), but every read carries a reporting year + period
+// range so the figures change with the chosen periods, exactly like the
+// aggregated ReportingBalance data behind account 1000. Nothing of the
+// existing InterCompany code is touched: this only adds a new tab.
+// ===================================================================
+(function () {
+  if (window.__numaIC2) { return; }
+  window.__numaIC2 = 1;
+  var NF2 = window.fetch;
+  function nap2(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
+  var IC2ENT = [
+    ['HQ', 1000, 3784237, 'Numa Group SE'],
+    ['DACH', 900, 3745758, 'Numa Deutschland GmbH'],
+    ['DACH', 901, 3745759, 'COSI Hamburg S\u00fcd GmbH'],
+    ['DACH', 902, 3745760, 'COSI K\u00f6ln Nord GmbH'],
+    ['DACH', 801, 3745740, 'Numa \u00d6sterreich GmbH'],
+    ['DACH', 500, 3751399, 'Numa Prague s.r.o.'],
+    ['DACH', 302, 3708480, 'Numa Schweiz GmbH'],
+    ['WEST', 99, 3642741, 'Numa Netherlands B.V.'],
+    ['WEST', 104, 2657065, 'Numa Nederland Operations B.V.'],
+    ['WEST', 400, 3383979, 'YAYS Frankrijklei B.V.'],
+    ['WEST', 401, 3693157, 'Numa Belgium North SRL'],
+    ['WEST', 300, 3706020, 'Numa Norge AS'],
+    ['WEST', 301, 3716405, 'numa Danmark ApS'],
+    ['WEST', 203, 3741441, 'NUMA France S.A.S.'],
+    ['WEST', 600, 3717706, 'numa stays UK Ltd'],
+    ['WEST', 610, 3900740, 'Native Places Limited'],
+    ['SOUTH', 700, 3725452, 'Numa Stays Espa\u00f1a S.L.'],
+    ['SOUTH', 710, 3732987, 'NUMA PORTUGAL, UNIPESSOAL, LDA.'],
+    ['SOUTH', 720, 3745729, 'Numa Italia S.r.l.'],
+    ['SOUTH', 711, 4166557, 'numa Lisbon South, unipessoal Lda']
+    ];
+  function ic2Norm(s) {
+    return String(s || '').toLowerCase()
+    .replace(/[.,()]/g, ' ')
+    .replace(/\b(gmbh|ag|srl|s\.r\.o|sro|sas|s\.a\.s|sl|s\.l|bv|b\.v|ltd|limited|aps|lda|unipessoal|inc|corp|se|spa|s\.r\.l)\b/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  }
+  function ic2Tokens(s) { return ic2Norm(s).split(' ').filter(function (w) { return w.length > 2; }); }
+  function ic2Match(description, selfHuman) {
+    var dTokens = ic2Tokens(description);
+    if (!dTokens.length) return null;
+    var best = null, bestScore = 0;
+    for (var i = 0; i < IC2ENT.length; i++) {
+      var e = IC2ENT[i];
+      if (e[1] === selfHuman) continue;
+      var eTokens = ic2Tokens(e[3]);
+      var score = 0;
+      for (var j = 0; j < eTokens.length; j++) { if (dTokens.indexOf(eTokens[j]) > -1) score++; }
+      if (score > bestScore) { bestScore = score; best = e; }
+    }
+    return bestScore > 0 ? best : null;
+  }
+  function ic2InRange(code) {
+    var n = parseInt(String(code || '').replace(/[^0-9]/g, ''), 10);
+    return !isNaN(n) && n >= 140000 && n < 150000;
+  }
+  var IC2_BUCKETS = [['ext', 'Trade AR external'], ['grp', 'Trade AR group'], ['oth', 'Other receivables'], ['ico', 'IC other (unnamed)'], ['loan', 'Loans / shareholder']];
+  function ic2Bucket(code) {
+    var n = parseInt(String(code || '').replace(/[^0-9]/g, ''), 10);
+    if (isNaN(n)) return 'oth';
+    if (n >= 147000) return 'loan';
+    if (n >= 145000) return 'ico';
+    if (n >= 143000) return 'oth';
+    if (n >= 142000) return 'grp';
+    return 'ext';
+  }
+  var IC2_GROUP_ORDER = ['HQ', 'DACH', 'WEST', 'SOUTH'];
+  function ic2Groups() { return IC2_GROUP_ORDER.map(function (g) { return { name: g, members: IC2ENT.filter(function (e) { return e[0] === g; }) }; }); }
+  function ic2RowPlan() {
+    var groups = ic2Groups();
+    var plan = [];
+    groups.forEach(function (g, gi) {
+      g.members.forEach(function (e) { plan.push({ type: 'entity', e: e }); });
+      plan.push({ type: 'subtotal', name: g.name, members: g.members });
+      if (gi < groups.length - 1) plan.push({ type: 'blank' });
+    });
+    return plan;
+  }
+  function ic2CellValue(rowMembers, colMembers, matrix) {
+    var total = 0, any = false;
+    rowMembers.forEach(function (r) {
+      colMembers.forEach(function (c) {
+        if (r[1] === c[1]) return;
+        var v = matrix[r[1]] ? matrix[r[1]][c[1]] : undefined;
+        if (v !== undefined) { total += v; any = true; }
+      });
+    });
+    return any ? total : undefined;
+  }
+  function ic2Cell(v, bold) {
+    if (v === undefined || v === null) return '<td class="num">-</td>';
+    var n = Number(v) || 0;
+    if (Math.abs(n) < 0.005) return '<td class="num">-</td>';
+    var color = n > 0 ? '#12a150' : '#e2611a';
+    var bg = n > 0 ? 'rgba(61,220,132,0.14)' : 'rgba(255,138,92,0.14)';
+    var fw = bold ? 'font-weight:700;' : '';
+    return '<td class="num" style="color:' + color + ';background:' + bg + ';' + fw + '">' + fmt(n) + '</td>';
+  }
+  function ic2OtherVal(members, other, key) {
+    var t = 0, any = false;
+    members.forEach(function (m) { var o = other[m[1]]; if (o && o[key] !== undefined) { t += o[key]; any = true; } });
+    return any ? t : undefined;
+  }
+  function ic2RowTotal(members, matrix, other) {
+    var t = 0, any = false;
+    members.forEach(function (m) {
+      var r = matrix[m[1]]; if (r) { Object.keys(r).forEach(function (k) { t += r[k]; any = true; }); }
+      var o = other[m[1]]; if (o) { Object.keys(o).forEach(function (k) { t += o[k]; any = true; }); }
+    });
+    return any ? t : undefined;
+  }
+  function renderIC2Table(matrix, errors, other, oNotes) {
+    other = other || {}; oNotes = oNotes || {};
+    var out = document.getElementById('ic2Results');
+    if (!out) return;
+    var plan = ic2RowPlan();
+    var h = '<table><thead><tr><th class="txt">Lender / Borrower</th>';
+    plan.forEach(function (p) {
+      if (p.type === 'entity') { h += '<th class="num">' + esc(p.e[3]) + '</th>'; }
+      else if (p.type === 'subtotal') { h += '<th class="num" style="font-weight:700;">' + esc(p.name) + '</th>'; }
+      else { h += '<th class="num"></th>'; }
+    });
+    IC2_BUCKETS.forEach(function (b) { h += '<th class="num" style="color:#6f6a6b;">' + esc(b[1]) + '</th>'; });
+    h += '<th class="num" style="font-weight:700;">TOTAL</th>';
+    h += '</tr></thead><tbody>';
+    plan.forEach(function (rowP) {
+      if (rowP.type === 'blank') { h += '<tr><td colspan="' + (plan.length + 2 + IC2_BUCKETS.length) + '">&nbsp;</td></tr>'; return; }
+      if (rowP.type === 'entity') { h += '<tr><td>' + esc(rowP.e[1]) + ' - ' + esc(rowP.e[3]) + '</td>'; }
+      else { h += '<tr><td style="font-weight:700;">' + esc(rowP.name) + '</td>'; }
+      plan.forEach(function (colP) {
+        if (colP.type === 'blank') { h += '<td class="num"></td>'; return; }
+        var rowMembers = rowP.type === 'entity' ? [rowP.e] : rowP.members;
+        var colMembers = colP.type === 'entity' ? [colP.e] : colP.members;
+        if (rowP.type === 'entity' && colP.type === 'entity' && rowP.e[1] === colP.e[1]) { h += '<td class="num">-</td>'; return; }
+        var bold = rowP.type === 'subtotal' || colP.type === 'subtotal';
+        h += ic2Cell(ic2CellValue(rowMembers, colMembers, matrix), bold);
+      });
+      var rm = rowP.type === 'entity' ? [rowP.e] : rowP.members;
+      var bd = rowP.type === 'subtotal';
+      IC2_BUCKETS.forEach(function (b) {
+        var v = ic2OtherVal(rm, other, b[0]);
+        var cc = ic2Cell(v, bd);
+        if (rowP.type === 'entity' && oNotes[rowP.e[1]] && oNotes[rowP.e[1]][b[0]]) { cc = cc.replace('<td ', '<td title="' + esc(oNotes[rowP.e[1]][b[0]].join(' | ')) + '" '); }
+        h += cc;
+      });
+      h += ic2Cell(ic2RowTotal(rm, matrix, other), true);
+      h += '</tr>';
+    });
+    h += '</tbody></table>';
+    if (errors && errors.length) { h += '<div class="note" style="margin-top:10px;color:#b45309;">Errors: ' + esc(errors.join(' | ')) + '</div>'; }
+    out.innerHTML = h;
+  }
+  function ic2Vals() {
+    function v(id, d) { var e = document.getElementById(id); var n = e ? parseInt(e.value, 10) : NaN; return isNaN(n) ? d : n; }
+    var nowY = new Date().getFullYear();
+    return { yFrom: v('ic2YearFrom', nowY), yTo: v('ic2YearTo', nowY), pFrom: v('ic2PerFrom', 1), pTo: v('ic2PerTo', 12) };
+  }
+  function ic2Fetch(m) {
+    var q = ic2Vals();
+    var url = '/api/gl-balance?division=' + m[2] + '&balanceType=B&codeFrom=140000&codeTo=149999'
+    + '&yearFrom=' + q.yFrom + '&yearTo=' + q.yTo + '&periodFrom=' + q.pFrom + '&periodTo=' + q.pTo;
+    return NF2.call(window, url, { credentials: 'same-origin' }).then(function (r) {
+      return r.json().then(function (j) {
+        if (!r.ok || (j && j.error)) return { m: m, error: (j && j.error) || ('HTTP ' + r.status), accounts: [] };
+        return { m: m, accounts: (j && j.accounts) || [] };
+      });
+    }).catch(function (e) { return { m: m, error: String(e), accounts: [] }; });
+  }
+  function ic2FetchRetry(m) {
+    return ic2Fetch(m).then(function (r) {
+      if (!r.error) return r;
+      return nap2(1500).then(function () { return ic2Fetch(m); }).then(function (r2) {
+        if (!r2.error) return r2;
+        return nap2(1500).then(function () { return ic2Fetch(m); });
+      });
+    });
+  }
+  function runIC2() {
+    var btn = document.getElementById('ic2Run');
+    var status = document.getElementById('ic2Status');
+    if (btn) btn.disabled = true;
+    var res = new Array(IC2ENT.length);
+    var nextI = 0, doneI = 0;
+    function paint() {
+      var matrix = {}, other = {}, oNotes = {}, errors = [];
+      for (var i = 0; i < IC2ENT.length; i++) {
+        var m = IC2ENT[i], r = res[i];
+        if (!r) continue;
+        if (r.error) { errors.push(m[1] + ': ' + r.error); continue; }
+        matrix[m[1]] = matrix[m[1]] || {};
+        (function (m, accounts) {
+          accounts.forEach(function (a) {
+            if (!ic2InRange(a.code)) return;
+            var target = ic2Match(a.description, m[1]);
+            if (target) {
+              matrix[m[1]][target[1]] = (matrix[m[1]][target[1]] || 0) + a.amount;
+            } else {
+              var b = ic2Bucket(a.code);
+              other[m[1]] = other[m[1]] || {}; other[m[1]][b] = (other[m[1]][b] || 0) + a.amount;
+              oNotes[m[1]] = oNotes[m[1]] || {}; oNotes[m[1]][b] = oNotes[m[1]][b] || []; oNotes[m[1]][b].push(a.code + ' ' + a.description);
+            }
+          });
+        })(m, r.accounts || []);
+      }
+      var q = ic2Vals();
+      var span = 'year ' + q.yFrom + ' P' + q.pFrom + ' to ' + q.yTo + ' P' + q.pTo;
+      if (status) { status.textContent = (doneI < IC2ENT.length)
+                   ? ('Reading live from Exact Online - ' + doneI + ' of ' + IC2ENT.length + ' entities ready (' + span + ').')
+        : ('Done - ' + span + '.' + (errors.length ? (' ' + errors.length + ' errors.') : '')); }
+      renderIC2Table(matrix, errors, other, oNotes);
+    }
+    function lane() {
+      var idx = nextI++;
+      if (idx >= IC2ENT.length) return Promise.resolve();
+      return ic2FetchRetry(IC2ENT[idx]).then(function (r) { res[idx] = r; doneI = doneI + 1; paint(); return lane(); });
+    }
+    var lanes = [];
+    for (var w = 0; w < 8 && w < IC2ENT.length; w++) { lanes.push(lane()); }
+    Promise.all(lanes).then(function () { if (btn) btn.disabled = false; paint(); });
+  }
+  function ensureIC2() {
+    if (document.getElementById('ic2Wrap')) return;
+    var wrap = document.querySelector('.wrap');
+    if (!wrap || !wrap.parentNode) return;
+    var nowY = new Date().getFullYear();
+    var yOpts = '';
+    for (var y = nowY + 1; y >= nowY - 6; y--) { yOpts += '<option value="' + y + '">' + y + '</option>'; }
+    var pOpts = '';
+    for (var p = 1; p <= 12; p++) { pOpts += '<option value="' + p + '">P' + p + '</option>'; }
+    var box = document.createElement('div');
+    box.id = 'ic2Wrap';
+    box.style.cssText = 'display:none;padding:0 24px 24px;';
+    box.innerHTML =
+      '<div style="display:flex;align-items:flex-end;gap:14px;flex-wrap:wrap;margin:12px 0;">' +
+      '<div class="ctl"><label>YEAR FROM</label><select id="ic2YearFrom">' + yOpts + '</select></div>' +
+      '<div class="ctl"><label>PERIOD FROM</label><select id="ic2PerFrom">' + pOpts + '</select></div>' +
+      '<div class="ctl"><label>YEAR TO</label><select id="ic2YearTo">' + yOpts + '</select></div>' +
+      '<div class="ctl"><label>PERIOD TO</label><select id="ic2PerTo">' + pOpts + '</select></div>' +
+      '<button id="ic2Run" type="button" style="background:#1e3a8a;border:1px solid #1e40af;color:#ffffff;padding:10px 18px;border-radius:8px;font-weight:700;font-size:13px;cursor:pointer;">Run report</button>' +
+      '<span id="ic2Status" style="color:#6f6a6b;font-size:13px;"></span>' +
+      '</div>' +
+      '<div id="ic2Results"></div>';
+    wrap.parentNode.insertBefore(box, wrap.nextSibling);
+    document.getElementById('ic2YearFrom').value = String(nowY);
+    document.getElementById('ic2YearTo').value = String(nowY);
+    document.getElementById('ic2PerFrom').value = '1';
+    document.getElementById('ic2PerTo').value = '12';
+    document.getElementById('ic2Run').onclick = function () { runIC2(); };
+  }
+  function ic2Hide() { var w = document.getElementById('ic2Wrap'); if (w) w.style.display = 'none'; }
+  function ic2Show() {
+    ensureIC2();
+    if (window.__numaHideIC) { try { window.__numaHideIC(); } catch (e) {} }
+    var ep = document.getElementById('entPickWrap'); if (ep) ep.style.display = 'none';
+    var tabs = document.getElementById('numaTabs'); if (tabs) tabs.style.display = 'none';
+    var controls = document.querySelector('.controls'); if (controls) controls.style.display = 'none';
+    var kpisEl = document.getElementById('kpis'); if (kpisEl) kpisEl.style.display = 'none';
+    var wrap = document.querySelector('.wrap'); if (wrap) wrap.style.display = 'none';
+    var summaryWrap = document.getElementById('summaryWrap'); if (summaryWrap) summaryWrap.style.display = 'none';
+    var dtb = document.getElementById('detTools'); if (dtb) dtb.style.display = 'none';
+    var icWrap = document.getElementById('icWrap'); if (icWrap) icWrap.style.display = 'none';
+    var sel = document.getElementById('company'); if (sel) { sel.disabled = true; if (sel.options[0] && sel.options[0].value === 'selected') sel.options[0].text = 'Consolidated (' + IC2ENT.length + ' selected entities)'; }
+    var asof = document.getElementById('asof'); if (asof) asof.style.display = 'none';
+    var h1 = document.querySelector('h1'); if (h1) h1.textContent = 'InterCompany report';
+    document.getElementById('ic2Wrap').style.display = '';
+  }
+  function ic2AddOption() {
+    var dd = document.getElementById('dashboard');
+    if (!dd) return false;
+    if (dd.querySelector('option[value="ic2"]')) return true;
+    var opt = document.createElement('option');
+    opt.value = 'ic2';
+    opt.text = 'Dashboards: InterCompany Version 2';
+    var icOpt = dd.querySelector('option[value="ic"]');
+    if (icOpt && icOpt.nextSibling) { dd.insertBefore(opt, icOpt.nextSibling); }
+    else if (icOpt) { dd.appendChild(opt); }
+    else { dd.appendChild(opt); }
+    return true;
+  }
+  function ic2Active() { var dd = document.getElementById('dashboard'); return !!(dd && dd.value === 'ic2'); }
+  function ic2Wire() {
+    var dd = document.getElementById('dashboard');
+    if (!dd) return;
+    ic2AddOption();
+    if (dd.__ic2Wired) return;
+    dd.__ic2Wired = 1;
+    var prev = dd.onchange;
+    dd.onchange = function () {
+      if (dd.value === 'ic2') { ic2Show(); return; }
+      ic2Hide();
+      if (typeof prev === 'function') { return prev.apply(this, arguments); }
+    };
+  }
+  // The existing 700ms refresh of the A/P view keeps rebuilding the standard
+ // controls, so while Version 2 is open its own panel is re-asserted and the
+ // A/P pieces are kept hidden.
+ setInterval(function () {
+   ic2AddOption();
+   ic2Wire();
+   if (ic2Active()) {
+     var w = document.getElementById('ic2Wrap');
+     if (!w) { ic2Show(); return; }
+     if (w.style.display === 'none') { ic2Show(); return; }
+     var controls = document.querySelector('.controls'); if (controls && controls.style.display !== 'none') controls.style.display = 'none';
+     var kpisEl = document.getElementById('kpis'); if (kpisEl && kpisEl.style.display !== 'none') kpisEl.style.display = 'none';
+     var wrap = document.querySelector('.wrap'); if (wrap && wrap.style.display !== 'none') wrap.style.display = 'none';
+     var tabs = document.getElementById('numaTabs'); if (tabs && tabs.style.display !== 'none') tabs.style.display = 'none';
+     var dtb = document.getElementById('detTools'); if (dtb && dtb.style.display !== 'none') dtb.style.display = 'none';
+     var ep = document.getElementById('entPickWrap'); if (ep && ep.style.display !== 'none') ep.style.display = 'none';
+     var sw = document.getElementById('summaryWrap'); if (sw && sw.style.display !== 'none') sw.style.display = 'none';
+     var asof = document.getElementById('asof'); if (asof && asof.style.display !== 'none') asof.style.display = 'none';
+   }
+ }, 600);
+  var ic2Boot = setInterval(function () { if (ic2Wire(), document.getElementById('dashboard')) { ic2AddOption(); ic2Wire(); } }, 300);
+  setTimeout(function () { clearInterval(ic2Boot); }, 12000);
+})();
