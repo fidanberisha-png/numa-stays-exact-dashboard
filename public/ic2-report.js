@@ -138,7 +138,7 @@ tasks.push(glFetchRetry(m[2],null,openY).then(function(r){        if(r.error){er
   }
   function bucketOf(code){
     var n=parseInt(String(code||'').replace(/[^0-9]/g,''),10);
-    if(isNaN(n)){return 'oth';}
+    var W={'141100':'ext','141150':'ext','142100':'grp','141001':'ico','141050':'ico','141101':'ico','141102':'ico','141103':'ico','141201':'ico','141202':'ico','141203':'ico','141320':'ico','141410':'ico','141501':'ico','141600':'ico','142801':'ico','144003':'ico','144013':'ico','144016':'ico','144019':'ico','145200':'ico','145600':'ico','146301':'ico','146600':'ico','146601':'ico','146700':'ico','146710':'ico','146720':'ico'};return W[String(code||'')];if(isNaN(n)){return 'oth';}
     if(n>=147000){return 'loan';}
     if(n>=145000){return 'ico';}
     if(n>=144000){return 'ico';}
@@ -162,7 +162,7 @@ if(n>=142200){return 'ico';}if(n>=142000){return 'grp';}    if(n>=141200){return
     var groups={};
     codes.forEach(function(c){
       var k=bucketOf(c);
-      groups[k]=groups[k]||[];
+      if(!k){return;}groups[k]=groups[k]||[];
       groups[k].push(acc[c]);
     });
     var colspan=2+pers.length+1;
