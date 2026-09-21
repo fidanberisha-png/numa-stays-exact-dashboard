@@ -52,7 +52,7 @@
     return REPENT;
   }
   function glFetch(div,yFrom,yTo,pFrom,pTo){
-var url='/api/gl-balance?division='+div+'&balanceType=B&codeFrom=140000&codeTo=149999&yearTo='+yTo;if(yFrom!==undefined&&yFrom!==null){url+='&yearFrom='+yFrom;}    if(pFrom!==undefined&&pFrom!==null){url+='&periodFrom='+pFrom+'&periodTo='+pTo;}
+var url='/api/gl-balance?division='+div+'&balanceType=B&codeFrom=141000&codeTo=149999&yearTo='+yTo;if(yFrom!==undefined&&yFrom!==null){url+='&yearFrom='+yFrom;}    if(pFrom!==undefined&&pFrom!==null){url+='&periodFrom='+pFrom+'&periodTo='+pTo;}
     return NFR.call(window,url,{credentials:'same-origin'}).then(function(r){
       return r.json().then(function(j){
         if(!r.ok||(j&&j.error)){return {error:(j&&j.error)||('HTTP '+r.status),accounts:[]};}
