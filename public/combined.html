@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+  <html lang="en">
+  <head>
+  <meta charset="utf-8">
+  <title>Numa Stays - Exact Online and Business Central</title>
+<style>
+body { font-family: Segoe UI, Arial, sans-serif; margin: 0; background: #f5f6f8; color: #1b1b1f; }
+header { background: #0b3b5c; color: #fff; padding: 18px 24px; }
+h1 { font-size: 19px; margin: 0; }
+main { padding: 24px; }
+.cards { display: flex; flex-wrap: wrap; gap: 16px; margin-top: 18px; }
+.card { background: #fff; border-radius: 8px; padding: 16px 20px; min-width: 190px; box-shadow: 0 1px 3px rgba(0,0,0,0.12); }
+.card span { display: block; font-size: 11px; text-transform: uppercase; color: #6a6a75; letter-spacing: 0.05em; }
+.card strong { display: block; font-size: 22px; margin-top: 6px; }
+table { width: 100%; border-collapse: collapse; background: #fff; margin-top: 24px; box-shadow: 0 1px 3px rgba(0,0,0,0.12); }
+th, td { text-align: left; padding: 10px 14px; border-bottom: 1px solid #e6e6ea; font-size: 14px; }
+th { background: #eef1f5; font-size: 11px; text-transform: uppercase; color: #4a4a55; }
+.note { margin-top: 18px; font-size: 13px; color: #6a6a75; }
+.err { color: #a32020; }
+button { background: #0b3b5c; color: #fff; border: 0; border-radius: 6px; padding: 8px 14px; cursor: pointer; }
+</style>
+  </head>
+  <body>
+  <header>
+  <h1>Numa Stays - Exact Online and Dynamics 365 Business Central</h1>
+</header>
+<main>
+<button id="reload">Reload</button>
+<div class="cards" id="cards"></div>
+  <table id="rows"><thead><tr><th>Environment</th><th>Company</th><th>Receivables</th><th>Payables</th><th>Status</th></tr></thead><tbody></tbody></table>
+  <p class="note" id="note"></p>
+  </main>
+  <script>
+  function money(n) { return (Number(n) || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
+function card(label, value) { return '<div class="card"><span>' + label + '</span><strong>' + value + '</strong></div>'; }
+async function load() {
+document.getElementById('note').textContent = 'Loading Exact Online and Business Central...';
+const r = await fetch('/api/combined/summary');
+const d = await r.json();
+const t = d.totals || {};
+document.getElementById('cards').innerHTML = card('Exact revenue', money(t.exactRevenue)) + card('Exact pending invoices', t.exactPendingInvoices || 0) + card('BC receivables', money(t.bcReceivables)) + card('BC payables', money(t.bcPayables)) + card('Net position', money(t.netPosition));
+const body = document.querySelector('#rows tbody');
+body.innerHTML = '';
+  const envs = (d.businessCentral && d.businessCentral.environments) || [];
+envs.forEach(function (e) {
+  (e.companies || []).forEach(function (c) {
+  const tr = document.createElement('tr');
+  tr.innerHTML = '<td>' + e.environment + '</td><td>' + (c.name || '') + '</td><td>' + money(c.receivables) + '</td><td>' + money(c.payables) + '</td><td>' + (c.error ? 'error' : 'ok') + '</td>';
+    body.appendChild(tr);
+});
+if (e.error) {
+const tr = document.createElement('tr');
+tr.innerHTML = '<td>' + e.environment + '</td><td colspan="4" class="err">' + (typeof e.error === 'string' ? e.error : JSON.stringify(e.error)) + '</td>';
+body.appendChild(tr);
+}
+     });
+let note = 'Generated ' + (d.generatedAt || '');
+if (d.exact && !d.exact.ok) { note += ' | Exact Online is not available, sign in on the main dashboard first.'; }
+if (d.businessCentral && !d.businessCentral.ok) { note += ' | Business Central is not available, check BC_TENANT_ID, BC_CLIENT_ID, BC_CLIENT_SECRET and the admin consent.'; }
+document.getElementById('note').textContent = note;
+}
+document.getElementById('reload').addEventListener('click', load);
+load();
+</script>
+  </body>
+  </html>
+  
