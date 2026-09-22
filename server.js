@@ -23,6 +23,8 @@ app.use(require('./ageing-routes')(function () { return tokenData; }));
 app.use(require('./gl-balance-routes')(function () { return tokenData; }));
 app.use(require('./accrued-routes')(function () { return tokenData; }));
 app.use(require('./prepaid-routes')(function () { return tokenData; }));
+app.use(require('./bc-routes')());
+app.use(require('./combined-routes')());
 
 // Middleware
 app.use(cors());
@@ -45,6 +47,10 @@ app.use(session({
 app.use(express.static('public'));
 
 // Root route - serve dashboard.html
+// Combined Exact Online + Business Central page
+app.get('/combined', (req, res) => {
+    res.sendFile(__dirname + '/public/combined.html');
+});
 // Accrued dashboard page
 app.get('/accrued', (req, res) => {
     res.sendFile(__dirname + '/public/accrued.html');
